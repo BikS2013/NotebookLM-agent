@@ -22,6 +22,16 @@
 
 ## Completed
 
+### Filesystem Tools Review (2026-04-10)
+
+15. **FIXED: `createFileTool` overwrite message always said "File overwritten"** -- The `message` field in `createFileTool` checked `fs.existsSync(resolved)` after the file was already written, so it always returned true. Fixed to capture `existed` before writing.
+
+16. **ADDED: CLAUDE.md FilesystemTools documentation** -- Added `<FilesystemTools>` section documenting all 7 tools.
+
+17. **ADDED: `project-functions.md` Filesystem FRs** -- Added FR-FS-01 through FR-FS-07 documenting functional requirements for all 7 filesystem tools.
+
+18. **ADDED: Filesystem tools unit tests** -- `test-filesystem-tools.test.ts` (25 tests) covers all 7 tools with real filesystem operations in temp directories.
+
 ### TypeScript Migration (2026-04-10)
 
 1. **COMPLETED: Python-to-TypeScript migration** -- Full rewrite from Python (`google-adk` on PyPI) to TypeScript (`@google/adk` on npm). All 41 tools preserved, architecture unchanged.

@@ -171,6 +171,69 @@ The agent must support listing videos from a YouTube channel, accepting channel 
 
 ---
 
+### FR-FS-01: File Creation
+
+The agent must support creating new files with text content at a specified path. Parent directories are created automatically. By default, existing files are not overwritten; the `overwrite` flag must be set to true to replace an existing file.
+
+**Tool**: `create_file`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
+### FR-FS-02: File Reading
+
+The agent must support reading text content of a file. Binary files (containing null bytes) are detected and rejected. Content is truncated to a configurable maximum (default 10,000 characters) to prevent token overflow.
+
+**Tool**: `read_file`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
+### FR-FS-03: File Editing
+
+The agent must support editing files by either replacing the first occurrence of a specific text string with new content, or appending content to the end of the file when no search text is specified.
+
+**Tool**: `edit_file`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
+### FR-FS-04: File Deletion
+
+The agent must support permanently deleting a file. The agent should confirm with the user before executing. Returns an error if the path points to a directory instead of a file.
+
+**Tool**: `delete_file`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
+### FR-FS-05: Folder Creation
+
+The agent must support creating new folders with automatic parent directory creation. The operation is idempotent: if the folder already exists, it succeeds silently.
+
+**Tool**: `create_folder`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
+### FR-FS-06: Folder Deletion
+
+The agent must support permanently deleting a folder. Non-empty folders require the `recursive` flag to be explicitly set to true as a safety guard against accidental data loss. The agent should confirm with the user before executing.
+
+**Tool**: `delete_folder`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
+### FR-FS-07: Folder Listing
+
+The agent must support listing the contents of a folder, returning entry names, types (file/directory), and sizes. Supports recursive listing of subdirectories. Results are capped at 200 entries to prevent token overflow.
+
+**Tool**: `list_folder`
+**Module**: `notebooklm_agent/tools/filesystem-tools.ts`
+
+---
+
 ### FR-11: Multi-Step Workflow Orchestration
 
 The agent must be capable of executing multi-step workflows autonomously. For example:

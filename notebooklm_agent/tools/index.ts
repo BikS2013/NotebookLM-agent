@@ -85,3 +85,14 @@ export {
   getVideoTranscriptTool,
   listChannelVideosTool,
 } from './youtube-tools.ts';
+
+// Filesystem
+export {
+  createFileTool,
+  readFileTool,
+  editFileTool,
+  deleteFileTool,
+  createFolderTool,
+  deleteFolderTool,
+  listFolderTool,
+} from './filesystem-tools.ts';

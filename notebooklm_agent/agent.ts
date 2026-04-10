@@ -59,6 +59,14 @@ import {
   getVideoDescriptionTool,
   getVideoTranscriptTool,
   listChannelVideosTool,
+  // Filesystem
+  createFileTool,
+  readFileTool,
+  editFileTool,
+  deleteFileTool,
+  createFolderTool,
+  deleteFolderTool,
+  listFolderTool,
 } from './tools/index.ts';
 
 // Note: Destructive tools (delete_notebook, delete_source, delete_note) rely on the system
@@ -88,7 +96,7 @@ function buildInstruction(ctx: ReadonlyContext): string {
 
 ## Capabilities
 
-You can manage notebooks, sources, queries, studio content (audio, video, reports, quizzes, flashcards, mind maps, slides, infographics, data tables), downloads, sharing, research, aliases, notes, and YouTube content (search, video info, transcripts, channel browsing).
+You can manage notebooks, sources, queries, studio content (audio, video, reports, quizzes, flashcards, mind maps, slides, infographics, data tables), downloads, sharing, research, aliases, notes, YouTube content (search, video info, transcripts, channel browsing), and local files/folders (create, read, edit, delete, list).
 
 ## Tool Usage Guidelines
 
@@ -110,7 +118,7 @@ You can chain operations. For example:
 
 ## Destructive Operations
 
-**Always confirm with the user before deleting** notebooks, sources, or notes. These operations cannot be undone. The delete tools will pause for confirmation — only proceed when the user explicitly approves.
+**Always confirm with the user before deleting** notebooks, sources, notes, files, or folders. These operations cannot be undone. The delete tools will pause for confirmation — only proceed when the user explicitly approves.
 
 ## Response Style
 
@@ -130,7 +138,18 @@ You can chain operations. For example:
 - YouTube video URLs are accepted wherever a video_id is required (standard URLs, short URLs, embed URLs, Shorts URLs).
 - Transcripts may not be available for all videos (e.g., if captions are disabled by the uploader).
 - To add a YouTube video as a NotebookLM source, first get the video URL, then use **add_source** with source_type "url".
-- Prefer get_video_info (1 unit) over search_youtube (100 units) when you already have a video ID or URL.`;
+- Prefer get_video_info (1 unit) over search_youtube (100 units) when you already have a video ID or URL.
+
+## Filesystem Tools
+
+- Use **create_file** to write a new file. Parent directories are created automatically.
+- Use **read_file** to inspect file contents. Large files are truncated to 10000 characters by default.
+- Use **edit_file** to replace text in a file (provide old_text and new_text) or append content (omit old_text).
+- Use **delete_file** to remove a file. **Always confirm with the user first.**
+- Use **create_folder** to create a directory (and parent directories). Idempotent — safe to call if folder exists.
+- Use **delete_folder** to remove a folder. Set recursive=true for non-empty folders. **Always confirm with the user first.**
+- Use **list_folder** to see folder contents. Set recursive=true to include subdirectories.
+- File paths can be absolute or relative to the agent's working directory.`;
 }
 
 // Export the root agent for ADK discovery
@@ -197,5 +216,13 @@ export const rootAgent = new LlmAgent({
     getVideoDescriptionTool,
     getVideoTranscriptTool,
     listChannelVideosTool,
+    // Filesystem
+    createFileTool,
+    readFileTool,
+    editFileTool,
+    deleteFileTool,
+    createFolderTool,
+    deleteFolderTool,
+    listFolderTool,
   ],
 });

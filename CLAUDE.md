@@ -136,3 +136,71 @@ An AI agent built on Google ADK (Agent Development Kit) that manages Google Note
         Daily API quota: 10,000 units (free tier).
     </info>
 </YouTubeTools>
+
+<FilesystemTools>
+    <objective>
+        Seven ADK FunctionTools that enable creating, reading, editing, and deleting files
+        and folders on the local filesystem. These tools allow the agent to manage documents,
+        save generated content, and organize project files.
+    </objective>
+    <command>
+        Tools are registered in the agent and invoked by the LLM automatically.
+        No direct CLI command -- they are part of the ADK agent tool set.
+    </command>
+    <info>
+        The filesystem tools are defined in notebooklm_agent/tools/filesystem-tools.ts.
+        Uses Node.js built-in `node:fs` and `node:path` modules -- no external dependencies.
+        No configuration variables required.
+
+        Tool 1: create_file
+            Create a new file with given content at the specified path.
+            Parent directories are created automatically if they do not exist.
+            Parameters:
+                file_path (string, required) - Absolute or relative path for the new file
+                content (string, required) - Text content to write
+                overwrite (boolean, optional) - If true, overwrite existing file; otherwise fail if exists
+
+        Tool 2: read_file
+            Read the text content of a file with optional truncation.
+            Detects binary files (null bytes) and refuses to read them.
+            Parameters:
+                file_path (string, required) - Path to the file to read
+                max_chars (number, optional) - Maximum characters to return (default: 10000)
+
+        Tool 3: edit_file
+            Edit a file by replacing text or appending content.
+            When old_text is provided, the first occurrence is replaced with new_text.
+            When old_text is omitted, new_text is appended to the end.
+            Parameters:
+                file_path (string, required) - Path to the file to edit
+                old_text (string, optional) - Text to find and replace
+                new_text (string, required) - Replacement or append text
+
+        Tool 4: delete_file
+            Permanently delete a file. Agent should confirm with user first.
+            Parameters:
+                file_path (string, required) - Path to the file to delete
+
+        Tool 5: create_folder
+            Create a new folder. Parent directories created automatically.
+            Idempotent: succeeds silently if folder already exists.
+            Parameters:
+                folder_path (string, required) - Path for the new folder
+
+        Tool 6: delete_folder
+            Permanently delete a folder. Requires recursive=true for non-empty folders.
+            Agent should confirm with user first.
+            Parameters:
+                folder_path (string, required) - Path to the folder to delete
+                recursive (boolean, optional) - Must be true to delete non-empty folders
+
+        Tool 7: list_folder
+            List contents of a folder with file types and sizes.
+            Results capped at 200 entries.
+            Parameters:
+                folder_path (string, required) - Path to the folder to list
+                recursive (boolean, optional) - If true, include subdirectory contents
+
+        Tests: test_scripts/test-filesystem-tools.test.ts (25 tests)
+    </info>
+</FilesystemTools>
