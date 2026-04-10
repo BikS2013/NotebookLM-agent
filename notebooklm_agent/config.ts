@@ -8,6 +8,7 @@ export interface AgentConfig {
   readonly nlmCliPath: string;
   readonly geminiModel: string;
   readonly nlmDownloadDir: string;
+  readonly youtubeApiKey: string;
 }
 
 function requireEnv(name: string): string {
@@ -31,6 +32,7 @@ export function getConfig(): AgentConfig {
     nlmCliPath: requireEnv('NLM_CLI_PATH'),
     geminiModel: requireEnv('GEMINI_MODEL'),
     nlmDownloadDir: requireEnv('NLM_DOWNLOAD_DIR'),
+    youtubeApiKey: requireEnv('YOUTUBE_API_KEY'),
   });
 
   return _config;

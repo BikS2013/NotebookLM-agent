@@ -126,6 +126,51 @@ The agent must support listing, creating, updating, and deleting notes within no
 
 ---
 
+### FR-YT-01: YouTube Video Search
+
+The agent must support searching YouTube for videos by keyword, topic, or partial title. Results include video ID, title, channel name, publish date, description snippet, and thumbnail URL. Results are capped at 25 per search. Optionally supports filtering by channel ID and sorting by relevance, date, view count, or rating.
+
+**Tool**: `search_youtube`
+**API Endpoint**: YouTube Data API v3 `search.list` (100 quota units per call)
+
+---
+
+### FR-YT-02: YouTube Video Metadata Retrieval
+
+The agent must support retrieving detailed metadata for a YouTube video, including title, full description, duration, view/like/comment counts, tags, category, channel info, publish date, and live status. Accepts both video IDs and full YouTube URLs (all known URL formats including youtu.be, /shorts/, /embed/, /live/, etc.).
+
+**Tool**: `get_video_info`
+**API Endpoint**: YouTube Data API v3 `videos.list` (1 quota unit per call)
+
+---
+
+### FR-YT-03: YouTube Video Description Retrieval
+
+The agent must support retrieving only the description text of a YouTube video, truncated to 5000 characters. This is a lighter-weight alternative to `get_video_info` when only the description is needed.
+
+**Tool**: `get_video_description`
+**API Endpoint**: YouTube Data API v3 `videos.list` with `part=snippet` only (1 quota unit per call)
+
+---
+
+### FR-YT-04: YouTube Video Transcript Extraction
+
+The agent must support extracting the full transcript/captions of a YouTube video with timestamps. Works with auto-generated and manually uploaded captions. Supports language preference. Transcript text is truncated to 10,000 characters and segments capped at 500. Does not consume YouTube API quota (uses `youtube-transcript-plus` library via YouTube Innertube).
+
+**Tool**: `get_video_transcript`
+**External Dependency**: `youtube-transcript-plus` npm package
+
+---
+
+### FR-YT-05: YouTube Channel Video Listing
+
+The agent must support listing videos from a YouTube channel, accepting channel IDs (UC-prefixed), @handles, or channel URLs. Resolves handles/URLs to channel IDs before searching. Results include video IDs, titles, publish dates, and description snippets. Supports sorting by date, view count, relevance, or rating.
+
+**Tool**: `list_channel_videos`
+**API Endpoints**: YouTube Data API v3 `channels.list` (1 unit) + `search.list` (100 units)
+
+---
+
 ### FR-11: Multi-Step Workflow Orchestration
 
 The agent must be capable of executing multi-step workflows autonomously. For example:

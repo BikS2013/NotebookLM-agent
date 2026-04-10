@@ -32,7 +32,23 @@
 
 4. **COMPLETED: `.env` loading from agent directory** -- Configured `dotenv` to load `.env` from the agent directory rather than CWD.
 
-5. **COMPLETED: Unit tests (47 tests, all passing)** -- Config, parsers, nlm-runner, and notebook-tools test suites.
+5. **COMPLETED: Unit tests (94 tests, all passing)** -- Config, parsers, nlm-runner, notebook-tools, youtube-client, and youtube-tools test suites.
+
+### YouTube Unit Tests (2026-04-10)
+
+9. **COMPLETED: YouTube unit tests created** -- `test-youtube-client.test.ts` (24 tests) covers `extractVideoId` with 16 URL formats and edge cases, and `parseDuration` with 8 ISO 8601 patterns. `test-youtube-tools.test.ts` (23 tests) covers all 5 FunctionTool execute functions with mocked API responses, including error cases.
+
+10. **FIXED: `test-config.test.ts` missing `YOUTUBE_API_KEY`** -- The config test's `setAllEnvVars()` helper did not include `YOUTUBE_API_KEY` after it was added to the config, causing 3 test failures. Added the env var to setup and cleanup, plus an assertion for the new field.
+
+### YouTube Code Review (2026-04-10)
+
+11. **FIXED: `test-youtube-tools.test.ts` compilation errors** -- All 23 test cases accessed `FunctionTool.execute` directly, which is private in `@google/adk` type definitions. Fixed by routing all calls through a `callTool(tool, args)` helper that casts via `any`, matching the pattern used in `test-notebook-tools.test.ts`.
+
+12. **FIXED: `.env.example` missing `YOUTUBE_API_KEY`** -- Added the `YOUTUBE_API_KEY` entry with documentation per design section 10.3.4.
+
+13. **ADDED: CLAUDE.md YouTube tool documentation** -- Added `<YouTubeTools>` section documenting all 5 tools and the supporting `youtube-client.ts` module.
+
+14. **ADDED: `project-functions.md` YouTube FRs** -- Added FR-YT-01 through FR-YT-05 documenting functional requirements for all 5 YouTube tools.
 
 ### Code Review Fixes (2026-04-10, Python era)
 

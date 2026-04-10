@@ -59,3 +59,80 @@
 - You must never create fallback solutions for configuration settings. In every case a configuration setting is not provided you must raise the appropriate exception. You must never substitute the missing config value with a default or a fallback value.
 - If I ask you to make an exception to the configuration setting rule, you must write this exception in the projects memory file, before you implement it.
 </structure-and-conventions>
+
+# NotebookLM Agent
+
+## Project Overview
+
+An AI agent built on Google ADK (Agent Development Kit) that manages Google NotebookLM collections through natural language. Uses the `nlm` CLI tool for NotebookLM operations and the YouTube Data API v3 for YouTube content discovery.
+
+## Tools
+
+<YouTubeTools>
+    <objective>
+        Five ADK FunctionTools that enable searching YouTube, retrieving video metadata,
+        fetching transcripts, and listing channel videos. These tools allow the agent to
+        discover YouTube content and integrate it with NotebookLM notebooks.
+    </objective>
+    <command>
+        Tools are registered in the agent and invoked by the LLM automatically.
+        No direct CLI command -- they are part of the ADK agent tool set.
+    </command>
+    <info>
+        The YouTube tools are defined in notebooklm_agent/tools/youtube-tools.ts and backed
+        by the HTTP client in notebooklm_agent/tools/youtube-client.ts.
+
+        Requires YOUTUBE_API_KEY environment variable (no fallback).
+
+        Tool 1: search_youtube
+            Search YouTube for videos matching a query.
+            Parameters:
+                query (string, required) - Search keywords, title fragments, or topic
+                max_results (number, optional) - Max results 1-25
+                channel_id (string, optional) - Restrict to a specific channel
+                order (enum, optional) - "relevance" | "date" | "viewCount" | "rating"
+            Quota cost: 100 units per call
+
+        Tool 2: get_video_info
+            Get detailed metadata about a YouTube video (title, description, duration,
+            views, likes, tags, category, channel info).
+            Parameters:
+                video_id (string, required) - Video ID or full YouTube URL
+            Quota cost: 1 unit per call
+
+        Tool 3: get_video_description
+            Get only the description text of a YouTube video (truncated to 5000 chars).
+            Parameters:
+                video_id (string, required) - Video ID or full YouTube URL
+            Quota cost: 1 unit per call
+
+        Tool 4: get_video_transcript
+            Get the full transcript/captions of a YouTube video with timestamps.
+            Works with auto-generated and manual captions.
+            Parameters:
+                video_id (string, required) - Video ID or full YouTube URL
+                language (string, optional) - Preferred language code (e.g., "en", "es")
+            Quota cost: 0 units (uses youtube-transcript-plus, not the API)
+
+        Tool 5: list_channel_videos
+            List videos from a YouTube channel. Accepts channel ID, @handle, or URL.
+            Parameters:
+                channel_id (string, required) - Channel ID, @handle, or channel URL
+                max_results (number, optional) - Max results 1-50
+                order (enum, optional) - "date" | "viewCount" | "relevance" | "rating"
+            Quota cost: 101 units (100 search + 1 channel resolution)
+
+        Supporting modules:
+            youtube-client.ts - HTTP client for YouTube Data API v3 with:
+                - YouTubeApiResult<T> union type for all responses
+                - extractVideoId() - parses any YouTube URL format to video ID
+                - parseDuration() - ISO 8601 duration to seconds
+                - youtubeSearchVideos() - search.list endpoint wrapper
+                - youtubeGetVideos() - videos.list endpoint wrapper
+                - resolveChannelId() - handle/URL to UC-prefixed channel ID
+                - Error classification (rate_limit, config_error, not_found, error)
+                - AbortController-based 10s timeout on all requests
+
+        Daily API quota: 10,000 units (free tier).
+    </info>
+</YouTubeTools>

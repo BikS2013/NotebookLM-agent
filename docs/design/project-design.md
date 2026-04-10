@@ -2252,3 +2252,1306 @@ For text-only commands, `_run_nlm()` returns `{"status": "success", "output": "<
 3. Return exit code success/failure only
 
 Strategy 1 (return raw text) is recommended for v1 due to its simplicity. The LLM is capable of extracting relevant information from text output.
+
+---
+
+## 10. YouTube Tools Extension
+
+**Version**: 1.1
+**Date**: 2026-04-10
+**Status**: Design Complete
+**Dependencies**: refined-request-youtube-tools.md, investigation-youtube-tools.md, codebase-scan-youtube-tools.md, plan-003-youtube-tools.md
+
+This section extends the project design with 5 YouTube tools backed by the YouTube Data API v3 and the `youtube-transcript-plus` npm package. Unlike the existing NLM-based tools that use subprocess execution via `runNlm()`, the YouTube tools interact directly with external REST APIs and a transcript library via HTTP.
+
+### 10.1 Updated Component Diagram
+
+```mermaid
+graph TB
+    subgraph "User Layer"
+        USER["User (Browser / Terminal)"]
+    end
+
+    subgraph "ADK Runtime"
+        ADKWEB["adk web (FastAPI + Uvicorn)"]
+        ADKRUN["adk run (CLI REPL)"]
+        RUNNER["Runner<br/>(reason-act loop)"]
+        SESSION["InMemorySessionService<br/>(session.state)"]
+    end
+
+    subgraph "Agent Layer"
+        AGENT["root_agent<br/>(LlmAgent)"]
+        GEMINI["Gemini 2.5 Flash<br/>(Google AI API)"]
+    end
+
+    subgraph "Tool Layer"
+        AUTH["auth_tools.ts"]
+        NB["notebook_tools.ts"]
+        SRC["source_tools.ts"]
+        QRY["query_tools.ts"]
+        STU["studio_tools.ts"]
+        DL["download_tools.ts"]
+        SHR["sharing_tools.ts"]
+        ALI["alias_tools.ts"]
+        RES["research_tools.ts"]
+        NOTE["note_tools.ts"]
+        YT["youtube_tools.ts"]
+    end
+
+    subgraph "Infrastructure Layer"
+        RUNNER_NLM["nlm_runner.ts<br/>(runNlm helper)"]
+        YTCLIENT["youtube_client.ts<br/>(YouTube API client)"]
+        PARSERS["parsers.ts<br/>(JSON parsing)"]
+        CONFIG["config.ts<br/>(env var loading)"]
+    end
+
+    subgraph "External Systems"
+        NLM["nlm CLI<br/>(subprocess)"]
+        NLMAPI["Google NotebookLM API<br/>(via nlm auth cookies)"]
+        YTAPI["YouTube Data API v3<br/>(REST)"]
+        YTINNER["YouTube Innertube<br/>(transcript scraping)"]
+    end
+
+    USER -->|HTTP / stdin| ADKWEB
+    USER -->|stdin| ADKRUN
+    ADKWEB --> RUNNER
+    ADKRUN --> RUNNER
+    RUNNER --> SESSION
+    RUNNER --> AGENT
+    AGENT <-->|tool calls / responses| GEMINI
+
+    AGENT --> AUTH
+    AGENT --> NB
+    AGENT --> SRC
+    AGENT --> QRY
+    AGENT --> STU
+    AGENT --> DL
+    AGENT --> SHR
+    AGENT --> ALI
+    AGENT --> RES
+    AGENT --> NOTE
+    AGENT --> YT
+
+    AUTH --> RUNNER_NLM
+    NB --> RUNNER_NLM
+    SRC --> RUNNER_NLM
+    QRY --> RUNNER_NLM
+    STU --> RUNNER_NLM
+    DL --> RUNNER_NLM
+    SHR --> RUNNER_NLM
+    ALI --> RUNNER_NLM
+    RES --> RUNNER_NLM
+    NOTE --> RUNNER_NLM
+
+    YT --> YTCLIENT
+    YT --> PARSERS
+
+    RUNNER_NLM --> CONFIG
+    RUNNER_NLM --> PARSERS
+    YTCLIENT --> CONFIG
+    RUNNER_NLM -->|subprocess.run| NLM
+    NLM -->|HTTP + cookies| NLMAPI
+    YTCLIENT -->|fetch()| YTAPI
+    YTCLIENT -->|youtube-transcript-plus| YTINNER
+```
+
+### 10.2 Updated File Tree
+
+New and modified files (additions marked with `+`):
+
+```
+NotebookLM-agent/
+├── notebooklm_agent/
+│   ├── agent.ts              # MODIFIED: YouTube tool imports + registration + system prompt
+│   ├── config.ts             # MODIFIED: youtubeApiKey field added
+│   └── tools/
+│       ├── index.ts          # MODIFIED: YouTube tool barrel exports
+│       ├── youtube-client.ts # NEW: YouTube Data API HTTP client + utilities
+│       ├── youtube-tools.ts  # NEW: 5 FunctionTool definitions
+│       ├── nlm-runner.ts
+│       ├── parsers.ts
+│       └── ... (existing tool files unchanged)
+├── test_scripts/
+│   ├── test-youtube-client.test.ts  # NEW: Unit tests for client/parser
+│   ├── test-youtube-tools.test.ts   # NEW: Unit tests for 5 tools
+│   └── ... (existing test files unchanged)
+├── package.json              # MODIFIED: youtube-transcript-plus dependency
+└── .env.example              # MODIFIED: YOUTUBE_API_KEY entry
+```
+
+### 10.3 Configuration Changes
+
+#### 10.3.1 Updated `AgentConfig` Interface
+
+```typescript
+// notebooklm_agent/config.ts
+
+export interface AgentConfig {
+  readonly googleGenaiApiKey: string;
+  readonly nlmCliPath: string;
+  readonly geminiModel: string;
+  readonly nlmDownloadDir: string;
+  readonly youtubeApiKey: string;  // NEW
+}
+```
+
+#### 10.3.2 Updated `getConfig()` Function
+
+```typescript
+export function getConfig(): AgentConfig {
+  if (_config) return _config;
+
+  _config = Object.freeze({
+    googleGenaiApiKey: requireEnv('GOOGLE_GENAI_API_KEY'),
+    nlmCliPath: requireEnv('NLM_CLI_PATH'),
+    geminiModel: requireEnv('GEMINI_MODEL'),
+    nlmDownloadDir: requireEnv('NLM_DOWNLOAD_DIR'),
+    youtubeApiKey: requireEnv('YOUTUBE_API_KEY'),  // NEW
+  });
+
+  return _config;
+}
+```
+
+#### 10.3.3 Updated Configuration Table
+
+| Variable | Interface Field | Purpose | How to Obtain |
+|----------|----------------|---------|---------------|
+| `GOOGLE_GENAI_API_KEY` | `googleGenaiApiKey` | Gemini model access | Google AI Studio |
+| `NLM_CLI_PATH` | `nlmCliPath` | Path to nlm executable | `which nlm` |
+| `GEMINI_MODEL` | `geminiModel` | Gemini model name | Google AI docs |
+| `NLM_DOWNLOAD_DIR` | `nlmDownloadDir` | Artifact download directory | Create directory |
+| `YOUTUBE_API_KEY` | `youtubeApiKey` | YouTube Data API v3 authentication | Google Cloud Console > APIs & Services > Credentials |
+
+#### 10.3.4 `.env.example` Addition
+
+```bash
+# YouTube Data API v3 key.
+# Obtain from: Google Cloud Console > APIs & Services > Credentials
+# Enable "YouTube Data API v3" in your Google Cloud project.
+# Daily quota: 10,000 units (free tier). See https://developers.google.com/youtube/v3/determine_quota_cost
+# search.list = 100 units, videos.list = 1 unit, channels.list = 1 unit
+YOUTUBE_API_KEY=
+```
+
+### 10.4 YouTube Client Design (`youtube-client.ts`)
+
+This module is the YouTube-specific analogue of `nlm-runner.ts`. It encapsulates all HTTP communication with the YouTube Data API v3 and provides pure utility functions for URL parsing and duration conversion.
+
+**Design principles:**
+- Functions accept `apiKey` as a parameter (not read from config directly) for testability
+- All exported functions return structured result objects -- never throw
+- Uses Node.js built-in `fetch()` with `AbortController` for timeouts
+- Error classification maps HTTP status codes to `NlmStatus`-compatible values
+
+#### 10.4.1 Complete TypeScript Implementation
+
+```typescript
+/**
+ * YouTube Data API v3 HTTP client and utilities.
+ * Analogous to nlm-runner.ts but for REST API calls instead of subprocess execution.
+ *
+ * Design:
+ * - All exported functions accept apiKey as a parameter (not read from config) for testability.
+ * - All exported async functions return YouTubeApiResult<T> -- never throw.
+ * - Uses Node.js built-in fetch() with AbortController for timeouts.
+ * - Error classification maps HTTP status codes to NlmStatus-compatible values.
+ */
+
+// ──────────────────────────────────────────────
+// Type definitions
+// ──────────────────────────────────────────────
+
+/** Unified result type for all YouTube API operations. */
+export type YouTubeApiResult<T> =
+  | { status: 'success'; data: T }
+  | { status: 'not_found'; error: string }
+  | { status: 'rate_limit'; error: string; action?: string }
+  | { status: 'config_error'; error: string; action?: string }
+  | { status: 'error'; error: string };
+
+/** Shape of a YouTube API error response body. */
+interface YouTubeApiErrorResponse {
+  error: {
+    code: number;
+    message: string;
+    errors: Array<{
+      message: string;
+      domain: string;
+      reason: string;
+    }>;
+  };
+}
+
+/** A single item from search.list results. */
+export interface YouTubeSearchItem {
+  video_id: string;
+  title: string;
+  channel_title: string;
+  channel_id: string;
+  published_at: string;
+  description_snippet: string;
+  thumbnail_url: string;
+}
+
+/** A single item from videos.list results (full metadata). */
+export interface YouTubeVideoItem {
+  video_id: string;
+  title: string;
+  description: string;
+  channel_title: string;
+  channel_id: string;
+  published_at: string;
+  duration: string;
+  duration_seconds: number;
+  view_count: number;
+  like_count: number;
+  comment_count: number;
+  tags: string[];
+  category_id: string;
+  thumbnail_url: string;
+  url: string;
+  is_live: boolean;
+  default_language: string | null;
+}
+
+// ──────────────────────────────────────────────
+// Internal: YouTube API response shapes (raw)
+// ──────────────────────────────────────────────
+
+interface RawThumbnail {
+  url: string;
+  width?: number;
+  height?: number;
+}
+
+interface RawSearchItem {
+  id: { kind: string; videoId?: string };
+  snippet: {
+    publishedAt: string;
+    channelId: string;
+    title: string;
+    description: string;
+    thumbnails: Record<string, RawThumbnail | undefined>;
+    channelTitle: string;
+  };
+}
+
+interface RawSearchListResponse {
+  pageInfo: { totalResults: number; resultsPerPage: number };
+  items: RawSearchItem[];
+  nextPageToken?: string;
+}
+
+interface RawVideoItem {
+  id: string;
+  snippet: {
+    publishedAt: string;
+    channelId: string;
+    title: string;
+    description: string;
+    thumbnails: Record<string, RawThumbnail | undefined>;
+    channelTitle: string;
+    tags?: string[];
+    categoryId: string;
+    liveBroadcastContent: string;
+    defaultLanguage?: string;
+    defaultAudioLanguage?: string;
+  };
+  contentDetails?: {
+    duration: string;
+    caption: string;
+  };
+  statistics?: {
+    viewCount?: string;
+    likeCount?: string;
+    commentCount?: string;
+  };
+}
+
+interface RawVideoListResponse {
+  items: RawVideoItem[];
+}
+
+interface RawChannelItem {
+  id: string;
+  snippet?: {
+    title: string;
+  };
+}
+
+interface RawChannelListResponse {
+  items: RawChannelItem[];
+}
+
+// ──────────────────────────────────────────────
+// Constants
+// ──────────────────────────────────────────────
+
+const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+// ──────────────────────────────────────────────
+// Internal helpers
+// ──────────────────────────────────────────────
+
+/** Type guard for YouTube API error responses. */
+function isYouTubeApiError(data: unknown): data is YouTubeApiErrorResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'error' in data &&
+    typeof (data as YouTubeApiErrorResponse).error?.code === 'number'
+  );
+}
+
+/**
+ * Classify a YouTube API error into an NlmStatus-compatible status.
+ *
+ * HTTP 403 is disambiguated by checking the `reason` field:
+ * - "quotaExceeded" -> rate_limit
+ * - anything else (e.g., "forbidden", "keyInvalid") -> config_error
+ */
+function classifyYouTubeError(
+  httpStatus: number,
+  errorBody: YouTubeApiErrorResponse | null,
+): YouTubeApiResult<never> {
+  const reason = errorBody?.error?.errors?.[0]?.reason ?? '';
+  const message = errorBody?.error?.message ?? `HTTP ${httpStatus}`;
+
+  switch (true) {
+    case httpStatus === 400:
+      return { status: 'error', error: `Bad request: ${message}` };
+
+    case httpStatus === 403 && reason === 'quotaExceeded':
+      return {
+        status: 'rate_limit',
+        error: 'YouTube API daily quota exceeded.',
+        action:
+          'Wait until quota resets (midnight Pacific Time) or check your API key quota in Google Cloud Console.',
+      };
+
+    case httpStatus === 403:
+      return {
+        status: 'config_error',
+        error: `YouTube API access denied: ${message}`,
+        action:
+          'Check that YOUTUBE_API_KEY is valid and the YouTube Data API v3 is enabled in your Google Cloud project.',
+      };
+
+    case httpStatus === 404:
+      return { status: 'not_found', error: message };
+
+    case httpStatus === 429:
+      return {
+        status: 'rate_limit',
+        error: 'YouTube API rate limit reached (HTTP 429).',
+        action: 'Wait before retrying.',
+      };
+
+    case httpStatus >= 500:
+      return { status: 'error', error: `YouTube server error (${httpStatus}): ${message}` };
+
+    default:
+      return { status: 'error', error: `YouTube API error (${httpStatus}): ${message}` };
+  }
+}
+
+/**
+ * Perform a GET request to the YouTube Data API with timeout.
+ * Returns a classified YouTubeApiResult -- never throws.
+ */
+async function youtubeApiGet<T>(url: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<YouTubeApiResult<T>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const data: unknown = await response.json();
+
+    if (!response.ok || isYouTubeApiError(data)) {
+      const errorBody = isYouTubeApiError(data) ? data : null;
+      return classifyYouTubeError(response.status, errorBody);
+    }
+
+    return { status: 'success', data: data as T };
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return { status: 'error', error: `YouTube API request timed out after ${timeoutMs}ms` };
+    }
+    return { status: 'error', error: `Network error: ${String(err)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Pick the best available thumbnail URL from a thumbnails object.
+ * Preference: maxres > high > medium > default.
+ */
+function pickThumbnail(thumbnails: Record<string, RawThumbnail | undefined>): string {
+  return (
+    thumbnails.maxres?.url ??
+    thumbnails.high?.url ??
+    thumbnails.medium?.url ??
+    thumbnails.default?.url ??
+    ''
+  );
+}
+
+// ──────────────────────────────────────────────
+// Exported pure functions
+// ──────────────────────────────────────────────
+
+/**
+ * Extract an 11-character YouTube video ID from any known URL format or bare ID.
+ * Returns the ID string or throws an Error if the input is not recognizable.
+ *
+ * Supported formats:
+ * - https://www.youtube.com/watch?v=ID
+ * - https://youtu.be/ID
+ * - https://www.youtube.com/embed/ID
+ * - https://www.youtube.com/shorts/ID
+ * - https://www.youtube.com/live/ID
+ * - https://www.youtube.com/v/ID
+ * - https://m.youtube.com/watch?v=ID
+ * - https://music.youtube.com/watch?v=ID
+ * - https://www.youtube-nocookie.com/embed/ID
+ * - https://www.youtube.com/watch?list=PL&v=ID (v not first param)
+ * - Bare 11-character ID
+ */
+export function extractVideoId(input: string): string {
+  if (!input || typeof input !== 'string') {
+    throw new Error('Video ID or URL is required.');
+  }
+
+  const trimmed = input.trim();
+
+  // Bare 11-character video ID (alphanumeric, - and _)
+  if (/^[\w-]{11}$/.test(trimmed)) return trimmed;
+
+  const patterns: RegExp[] = [
+    // youtu.be/<id>
+    /youtu\.be\/([\w-]{11})/,
+    // youtube.com/shorts/<id>
+    /youtube\.com\/shorts\/([\w-]{11})/,
+    // youtube.com/live/<id>
+    /youtube\.com\/live\/([\w-]{11})/,
+    // youtube.com/embed/<id>
+    /youtube\.com\/embed\/([\w-]{11})/,
+    // youtube-nocookie.com/embed/<id>
+    /youtube-nocookie\.com\/embed\/([\w-]{11})/,
+    // youtube.com/v/<id>
+    /youtube\.com\/v\/([\w-]{11})/,
+    // youtube.com/watch?...v=<id> (v can appear anywhere in query string)
+    /(?:youtube(?:-nocookie)?\.com|music\.youtube\.com)\/watch\?.*[?&]v=([\w-]{11})/,
+    // Fallback: youtube.com/watch?v=<id> (v is the first param)
+    /(?:youtube(?:-nocookie)?\.com|music\.youtube\.com)\/watch\?v=([\w-]{11})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = trimmed.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  throw new Error(
+    `Could not extract a YouTube video ID from: "${trimmed}". ` +
+    'Provide a valid YouTube URL or an 11-character video ID.',
+  );
+}
+
+/**
+ * Convert an ISO 8601 duration string (e.g., "PT1H30M45S") to total seconds.
+ * Returns 0 for unparseable strings.
+ */
+export function parseDuration(iso8601: string): number {
+  const match = iso8601.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return 0;
+  const hours = parseInt(match[1] ?? '0', 10);
+  const minutes = parseInt(match[2] ?? '0', 10);
+  const seconds = parseInt(match[3] ?? '0', 10);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+// ──────────────────────────────────────────────
+// Exported async API functions
+// ──────────────────────────────────────────────
+
+/**
+ * Generic YouTube API fetch helper.
+ * Constructs the full URL with the API key and delegates to youtubeApiGet.
+ *
+ * @param apiKey  YouTube Data API v3 key
+ * @param endpoint  API path after /youtube/v3/ (e.g., "search", "videos", "channels")
+ * @param params  Query parameters (excluding "key", which is added automatically)
+ */
+export async function youtubeApiFetch<T>(
+  apiKey: string,
+  endpoint: string,
+  params: Record<string, string>,
+): Promise<YouTubeApiResult<T>> {
+  const searchParams = new URLSearchParams({ ...params, key: apiKey });
+  const url = `${YOUTUBE_API_BASE}/${endpoint}?${searchParams.toString()}`;
+  return youtubeApiGet<T>(url);
+}
+
+/**
+ * Resolve a channel identifier (handle, URL, or raw ID) to a UC-prefixed channel ID.
+ *
+ * Supported input formats:
+ * - Raw UC-prefixed channel ID (returned as-is, no API call)
+ * - @handle (resolved via channels.list?forHandle=@handle)
+ * - https://www.youtube.com/@handle (handle extracted, then API call)
+ * - https://www.youtube.com/channel/UCxxx (ID extracted, returned as-is)
+ * - https://youtube.com/c/name (legacy -- treated as handle, resolved via API)
+ *
+ * @param apiKey  YouTube Data API v3 key
+ * @param input   Channel identifier in any of the supported formats
+ * @returns YouTubeApiResult with the resolved channel ID string and optional title
+ */
+export async function resolveChannelId(
+  apiKey: string,
+  input: string,
+): Promise<YouTubeApiResult<{ channelId: string; channelTitle: string }>> {
+  const trimmed = input.trim();
+
+  // 1. Raw UC-prefixed channel ID -- return as-is (no API call needed)
+  if (/^UC[\w-]{22}$/.test(trimmed)) {
+    return { status: 'success', data: { channelId: trimmed, channelTitle: '' } };
+  }
+
+  // 2. Full URL: extract the relevant part
+  let handle: string | null = null;
+
+  // https://www.youtube.com/channel/UCxxxxxxx
+  const channelUrlMatch = trimmed.match(/youtube\.com\/channel\/(UC[\w-]{22})/);
+  if (channelUrlMatch) {
+    return { status: 'success', data: { channelId: channelUrlMatch[1], channelTitle: '' } };
+  }
+
+  // https://www.youtube.com/@handle
+  const handleUrlMatch = trimmed.match(/youtube\.com\/@([\w.-]+)/);
+  if (handleUrlMatch) {
+    handle = handleUrlMatch[1];
+  }
+
+  // https://youtube.com/c/name (legacy)
+  const legacyUrlMatch = trimmed.match(/youtube\.com\/c\/([\w.-]+)/);
+  if (!handle && legacyUrlMatch) {
+    handle = legacyUrlMatch[1];
+  }
+
+  // 3. Bare @handle
+  if (!handle && trimmed.startsWith('@')) {
+    handle = trimmed.slice(1);
+  }
+
+  // 4. If no pattern matched, treat the raw input as a handle attempt
+  if (!handle) {
+    handle = trimmed;
+  }
+
+  // Resolve handle via YouTube Data API channels.list
+  const result = await youtubeApiFetch<RawChannelListResponse>(apiKey, 'channels', {
+    part: 'id,snippet',
+    forHandle: `@${handle}`,
+  });
+
+  if (result.status !== 'success') return result;
+
+  const channel = result.data.items?.[0];
+  if (!channel) {
+    return { status: 'not_found', error: `Channel not found for identifier: "${input}"` };
+  }
+
+  return {
+    status: 'success',
+    data: {
+      channelId: channel.id,
+      channelTitle: channel.snippet?.title ?? '',
+    },
+  };
+}
+
+/**
+ * Search YouTube for videos matching a query.
+ * Wraps the search.list endpoint (100 quota units per call).
+ */
+export async function youtubeSearchVideos(
+  apiKey: string,
+  params: {
+    query: string;
+    maxResults?: number;
+    channelId?: string;
+    order?: string;
+  },
+): Promise<YouTubeApiResult<{ items: YouTubeSearchItem[]; totalResults: number }>> {
+  const apiParams: Record<string, string> = {
+    part: 'snippet',
+    type: 'video',
+    q: params.query,
+  };
+  if (params.maxResults !== undefined) apiParams.maxResults = String(params.maxResults);
+  if (params.channelId) apiParams.channelId = params.channelId;
+  if (params.order) apiParams.order = params.order;
+
+  const result = await youtubeApiFetch<RawSearchListResponse>(apiKey, 'search', apiParams);
+  if (result.status !== 'success') return result;
+
+  const items: YouTubeSearchItem[] = result.data.items
+    .filter((item) => item.id.kind === 'youtube#video' && item.id.videoId)
+    .map((item) => ({
+      video_id: item.id.videoId!,
+      title: item.snippet.title,
+      channel_title: item.snippet.channelTitle,
+      channel_id: item.snippet.channelId,
+      published_at: item.snippet.publishedAt,
+      description_snippet: item.snippet.description.slice(0, 200),
+      thumbnail_url: pickThumbnail(item.snippet.thumbnails),
+    }));
+
+  return {
+    status: 'success',
+    data: {
+      items,
+      totalResults: result.data.pageInfo?.totalResults ?? items.length,
+    },
+  };
+}
+
+/**
+ * Get full metadata for one or more videos.
+ * Wraps the videos.list endpoint (1 quota unit per call, up to 50 IDs).
+ */
+export async function youtubeGetVideos(
+  apiKey: string,
+  videoIds: string[],
+  parts: string[] = ['snippet', 'contentDetails', 'statistics'],
+): Promise<YouTubeApiResult<YouTubeVideoItem[]>> {
+  const result = await youtubeApiFetch<RawVideoListResponse>(apiKey, 'videos', {
+    part: parts.join(','),
+    id: videoIds.join(','),
+  });
+  if (result.status !== 'success') return result;
+
+  const items: YouTubeVideoItem[] = result.data.items.map((v) => ({
+    video_id: v.id,
+    title: v.snippet.title,
+    description: v.snippet.description,
+    channel_title: v.snippet.channelTitle,
+    channel_id: v.snippet.channelId,
+    published_at: v.snippet.publishedAt,
+    duration: v.contentDetails?.duration ?? '',
+    duration_seconds: parseDuration(v.contentDetails?.duration ?? ''),
+    view_count: parseInt(v.statistics?.viewCount ?? '0', 10),
+    like_count: parseInt(v.statistics?.likeCount ?? '0', 10),
+    comment_count: parseInt(v.statistics?.commentCount ?? '0', 10),
+    tags: v.snippet.tags ?? [],
+    category_id: v.snippet.categoryId,
+    thumbnail_url: pickThumbnail(v.snippet.thumbnails),
+    url: `https://www.youtube.com/watch?v=${v.id}`,
+    is_live: v.snippet.liveBroadcastContent === 'live',
+    default_language: v.snippet.defaultLanguage ?? v.snippet.defaultAudioLanguage ?? null,
+  }));
+
+  return { status: 'success', data: items };
+}
+```
+
+### 10.5 YouTube Tools Design (`youtube-tools.ts`)
+
+This module defines 5 `FunctionTool` instances following the exact pattern of `source-tools.ts`. Each tool:
+1. Imports `FunctionTool` from `@google/adk` and `z` from `zod`
+2. Imports helpers from `youtube-client.ts` and `parsers.ts`
+3. Reads `youtubeApiKey` from `getConfig()` lazily inside the `execute` function
+4. Returns structured objects with a `status` field -- never throws
+
+#### 10.5.1 Complete TypeScript Implementation
+
+```typescript
+/**
+ * YouTube tools for the NotebookLM ADK agent.
+ * Enables searching YouTube, retrieving video metadata, fetching transcripts,
+ * and listing channel videos.
+ */
+
+import { FunctionTool } from '@google/adk';
+import { z } from 'zod';
+import {
+  fetchTranscript,
+  YoutubeTranscriptVideoUnavailableError,
+  YoutubeTranscriptDisabledError,
+  YoutubeTranscriptNotAvailableError,
+  YoutubeTranscriptNotAvailableLanguageError,
+  YoutubeTranscriptTooManyRequestError,
+  YoutubeTranscriptInvalidVideoIdError,
+} from 'youtube-transcript-plus';
+import { getConfig } from '../config.ts';
+import { truncateText, truncateList } from './parsers.ts';
+import {
+  extractVideoId,
+  youtubeSearchVideos,
+  youtubeGetVideos,
+  resolveChannelId,
+} from './youtube-client.ts';
+
+// ──────────────────────────────────────────────
+// Tool 1: search_youtube
+// ──────────────────────────────────────────────
+
+const searchYoutubeSchema = z.object({
+  query: z.string().describe(
+    'Search query string (keywords, title fragments, topic).',
+  ),
+  max_results: z.number().optional().describe(
+    'Maximum number of results to return (1-25).',
+  ),
+  channel_id: z.string().optional().describe(
+    'Optional channel ID to restrict search to a specific channel.',
+  ),
+  order: z.enum(['relevance', 'date', 'viewCount', 'rating']).optional().describe(
+    'Sort order for results.',
+  ),
+});
+
+export const searchYoutubeTool = new FunctionTool({
+  name: 'search_youtube',
+  description:
+    'Search YouTube for videos matching a query. Returns a list of matching videos with their IDs, ' +
+    'titles, channel names, publish dates, and thumbnail URLs. Use this to find videos by topic, ' +
+    'keyword, or partial title. Results are capped at 25 videos per search. ' +
+    'Costs 100 API quota units per call -- use sparingly.',
+  parameters: searchYoutubeSchema,
+  execute: async ({
+    query,
+    max_results,
+    channel_id,
+    order,
+  }: z.infer<typeof searchYoutubeSchema>) => {
+    if (!query.trim()) {
+      return { status: 'error', error: 'Query string cannot be empty.' };
+    }
+
+    const { youtubeApiKey } = getConfig();
+    const result = await youtubeSearchVideos(youtubeApiKey, {
+      query,
+      maxResults: max_results,
+      channelId: channel_id,
+      order,
+    });
+
+    if (result.status !== 'success') return result;
+
+    return {
+      status: 'success',
+      videos: result.data.items,
+      total_results: result.data.totalResults,
+      returned_count: result.data.items.length,
+    };
+  },
+});
+
+// ──────────────────────────────────────────────
+// Tool 2: get_video_info
+// ──────────────────────────────────────────────
+
+const getVideoInfoSchema = z.object({
+  video_id: z.string().describe(
+    'YouTube video ID (e.g., "dQw4w9WgXcQ") or full YouTube URL ' +
+    '(e.g., "https://www.youtube.com/watch?v=dQw4w9WgXcQ" or "https://youtu.be/dQw4w9WgXcQ").',
+  ),
+});
+
+export const getVideoInfoTool = new FunctionTool({
+  name: 'get_video_info',
+  description:
+    'Get detailed information about a YouTube video including its title, description, ' +
+    'publish date, duration, view count, like count, channel info, tags, and category. ' +
+    'Accepts either a video ID or a full YouTube URL. Costs only 1 API quota unit.',
+  parameters: getVideoInfoSchema,
+  execute: async ({ video_id }: z.infer<typeof getVideoInfoSchema>) => {
+    let parsedId: string;
+    try {
+      parsedId = extractVideoId(video_id);
+    } catch {
+      return { status: 'error', error: 'Invalid YouTube video ID or URL.' };
+    }
+
+    const { youtubeApiKey } = getConfig();
+    const result = await youtubeGetVideos(youtubeApiKey, [parsedId], [
+      'snippet',
+      'contentDetails',
+      'statistics',
+    ]);
+
+    if (result.status !== 'success') return result;
+    if (result.data.length === 0) {
+      return { status: 'not_found', error: `Video not found for ID: ${parsedId}` };
+    }
+
+    const video = result.data[0];
+
+    // Truncate description to 3000 characters
+    const [description, descTruncated] = truncateText(video.description, 3000);
+
+    return {
+      status: 'success',
+      video: {
+        ...video,
+        description,
+        truncated: descTruncated,
+      },
+    };
+  },
+});
+
+// ──────────────────────────────────────────────
+// Tool 3: get_video_description
+// ──────────────────────────────────────────────
+
+const getVideoDescriptionSchema = z.object({
+  video_id: z.string().describe(
+    'YouTube video ID or full YouTube URL.',
+  ),
+});
+
+export const getVideoDescriptionTool = new FunctionTool({
+  name: 'get_video_description',
+  description:
+    'Get the full description text of a YouTube video. Accepts either a video ID or a full ' +
+    'YouTube URL. Use this when you only need the description without other metadata. ' +
+    'The description is truncated to 5000 characters. Costs 1 API quota unit.',
+  parameters: getVideoDescriptionSchema,
+  execute: async ({ video_id }: z.infer<typeof getVideoDescriptionSchema>) => {
+    let parsedId: string;
+    try {
+      parsedId = extractVideoId(video_id);
+    } catch {
+      return { status: 'error', error: 'Invalid YouTube video ID or URL.' };
+    }
+
+    const { youtubeApiKey } = getConfig();
+    // Only request snippet part -- smaller payload, same 1 unit cost
+    const result = await youtubeGetVideos(youtubeApiKey, [parsedId], ['snippet']);
+
+    if (result.status !== 'success') return result;
+    if (result.data.length === 0) {
+      return { status: 'not_found', error: `Video not found for ID: ${parsedId}` };
+    }
+
+    const video = result.data[0];
+    const originalLength = video.description.length;
+    const [description, truncated] = truncateText(video.description, 5000);
+
+    return {
+      status: 'success',
+      video_id: parsedId,
+      title: video.title,
+      description,
+      truncated,
+      original_length: originalLength,
+    };
+  },
+});
+
+// ──────────────────────────────────────────────
+// Tool 4: get_video_transcript
+// ──────────────────────────────────────────────
+
+const getVideoTranscriptSchema = z.object({
+  video_id: z.string().describe(
+    'YouTube video ID or full YouTube URL.',
+  ),
+  language: z.string().optional().describe(
+    'Preferred transcript language code (e.g., "en", "es", "fr"). ' +
+    'If not provided, returns the first available transcript.',
+  ),
+});
+
+export const getVideoTranscriptTool = new FunctionTool({
+  name: 'get_video_transcript',
+  description:
+    'Get the text transcript of a YouTube video. Returns the full transcript text with timestamps. ' +
+    'Works with both auto-generated and manually uploaded captions. Accepts either a video ID or ' +
+    'a full YouTube URL. The transcript is truncated to 10000 characters to manage context size. ' +
+    'Does NOT use YouTube API quota (uses a separate transcript service).',
+  parameters: getVideoTranscriptSchema,
+  execute: async ({ video_id, language }: z.infer<typeof getVideoTranscriptSchema>) => {
+    let parsedId: string;
+    try {
+      parsedId = extractVideoId(video_id);
+    } catch {
+      return { status: 'error', error: 'Invalid YouTube video ID or URL.' };
+    }
+
+    try {
+      const options: { lang?: string } = {};
+      if (language) options.lang = language;
+
+      const segments = await fetchTranscript(parsedId, options);
+
+      if (!segments || segments.length === 0) {
+        return {
+          status: 'error',
+          error: `No transcript available for video ${parsedId}. The video may have captions disabled.`,
+        };
+      }
+
+      // Map segments to our output format
+      const mappedSegments = segments.map((s: { text: string; offset: number; duration: number }) => ({
+        text: s.text,
+        start: s.offset,
+        duration: s.duration,
+      }));
+
+      // Build full text and truncate
+      const fullTextRaw = segments.map((s: { text: string }) => s.text).join(' ');
+      const originalLength = fullTextRaw.length;
+      const [fullText, textTruncated] = truncateText(fullTextRaw, 10_000);
+
+      // Limit segments array to 500 entries
+      const [truncatedSegments, segsTruncated] = truncateList(mappedSegments, 500);
+
+      // Detect language from first segment
+      const detectedLang = (segments[0] as { lang?: string })?.lang ?? language ?? 'unknown';
+
+      return {
+        status: 'success',
+        video_id: parsedId,
+        language: detectedLang,
+        segments: truncatedSegments,
+        full_text: fullText,
+        truncated: textTruncated || segsTruncated,
+        original_length: originalLength,
+        segment_count: segments.length,
+      };
+    } catch (err: unknown) {
+      // Classify transcript-specific errors
+      if (err instanceof YoutubeTranscriptVideoUnavailableError) {
+        return {
+          status: 'not_found',
+          error: `Video not found or unavailable: ${parsedId}`,
+        };
+      }
+      if (err instanceof YoutubeTranscriptDisabledError) {
+        return {
+          status: 'error',
+          error: `Transcripts are disabled for video ${parsedId}. The video owner has turned off captions.`,
+        };
+      }
+      if (err instanceof YoutubeTranscriptNotAvailableError) {
+        return {
+          status: 'error',
+          error: `No transcript available for video ${parsedId}. The video may have captions disabled.`,
+        };
+      }
+      if (err instanceof YoutubeTranscriptNotAvailableLanguageError) {
+        return {
+          status: 'error',
+          error: (err as Error).message,
+        };
+      }
+      if (err instanceof YoutubeTranscriptTooManyRequestError) {
+        return {
+          status: 'rate_limit',
+          error: 'Transcript service rate limit reached. Try again later.',
+        };
+      }
+      if (err instanceof YoutubeTranscriptInvalidVideoIdError) {
+        return {
+          status: 'error',
+          error: `Invalid video ID format: ${parsedId}`,
+        };
+      }
+      // Unknown error -- return as generic error
+      return {
+        status: 'error',
+        error: `Transcript extraction failed: ${String(err)}`,
+      };
+    }
+  },
+});
+
+// ──────────────────────────────────────────────
+// Tool 5: list_channel_videos
+// ──────────────────────────────────────────────
+
+const listChannelVideosSchema = z.object({
+  channel_id: z.string().describe(
+    'YouTube channel ID (e.g., "UCxxxxxxxx"), channel handle (e.g., "@ChannelName"), ' +
+    'or channel URL (e.g., "https://www.youtube.com/@ChannelName").',
+  ),
+  max_results: z.number().optional().describe(
+    'Maximum number of videos to return (1-50).',
+  ),
+  order: z.enum(['date', 'viewCount', 'relevance', 'rating']).optional().describe(
+    'Sort order for results.',
+  ),
+});
+
+export const listChannelVideosTool = new FunctionTool({
+  name: 'list_channel_videos',
+  description:
+    'List videos from a YouTube channel, ordered by most recent first. Accepts a channel ID, ' +
+    'channel handle (e.g., "@ChannelName"), or channel URL. Returns video IDs, titles, ' +
+    'publish dates, and description snippets. Results are capped at 50 videos. ' +
+    'Costs 100 API quota units (uses search internally) plus 1 unit for channel resolution.',
+  parameters: listChannelVideosSchema,
+  execute: async ({
+    channel_id,
+    max_results,
+    order,
+  }: z.infer<typeof listChannelVideosSchema>) => {
+    const { youtubeApiKey } = getConfig();
+
+    // Step 1: Resolve channel identifier to a UC-prefixed channel ID
+    const channelResult = await resolveChannelId(youtubeApiKey, channel_id);
+    if (channelResult.status !== 'success') return channelResult;
+
+    const resolvedId = channelResult.data.channelId;
+    const channelTitle = channelResult.data.channelTitle;
+
+    // Step 2: Search for videos in the channel
+    const searchResult = await youtubeSearchVideos(youtubeApiKey, {
+      query: '',
+      channelId: resolvedId,
+      maxResults: max_results,
+      order: order ?? 'date',
+    });
+
+    if (searchResult.status !== 'success') return searchResult;
+
+    return {
+      status: 'success',
+      channel: {
+        channel_id: resolvedId,
+        channel_title: channelTitle,
+      },
+      videos: searchResult.data.items,
+      returned_count: searchResult.data.items.length,
+    };
+  },
+});
+```
+
+### 10.6 Agent Integration Changes
+
+#### 10.6.1 Barrel Export Addition (`tools/index.ts`)
+
+Append after the Notes section:
+
+```typescript
+// YouTube
+export {
+  searchYoutubeTool,
+  getVideoInfoTool,
+  getVideoDescriptionTool,
+  getVideoTranscriptTool,
+  listChannelVideosTool,
+} from './youtube-tools.ts';
+```
+
+#### 10.6.2 Agent Import Addition (`agent.ts`)
+
+Add to the import block from `./tools/index.ts`:
+
+```typescript
+import {
+  // ... existing imports ...
+  deleteNoteTool,
+  // YouTube (NEW)
+  searchYoutubeTool,
+  getVideoInfoTool,
+  getVideoDescriptionTool,
+  getVideoTranscriptTool,
+  listChannelVideosTool,
+} from './tools/index.ts';
+```
+
+#### 10.6.3 Tool Array Addition (`agent.ts`)
+
+Add after the Notes section in the `tools` array:
+
+```typescript
+    // Notes
+    listNotesTool,
+    createNoteTool,
+    updateNoteTool,
+    deleteNoteTool,
+    // YouTube (NEW)
+    searchYoutubeTool,
+    getVideoInfoTool,
+    getVideoDescriptionTool,
+    getVideoTranscriptTool,
+    listChannelVideosTool,
+  ],
+```
+
+#### 10.6.4 System Prompt Updates (`agent.ts`)
+
+**Update the Capabilities line** in `buildInstruction`:
+
+```typescript
+// FROM:
+'You can manage notebooks, sources, queries, studio content (audio, video, reports, quizzes, flashcards, mind maps, slides, infographics, data tables), downloads, sharing, research, aliases, and notes.'
+
+// TO:
+'You can manage notebooks, sources, queries, studio content (audio, video, reports, quizzes, flashcards, mind maps, slides, infographics, data tables), downloads, sharing, research, aliases, notes, and YouTube content (search, video info, transcripts, channel browsing).'
+```
+
+**Add a YouTube section** before the closing of the instruction string, after `## Response Style`:
+
+```typescript
+`
+## YouTube Tools
+
+- Use **search_youtube** to find videos by topic, keyword, or partial title. Costs 100 API quota units per call -- use sparingly.
+- Use **get_video_info** for comprehensive metadata (views, duration, tags, publish date). Costs only 1 quota unit.
+- Use **get_video_description** for just the description text (same 1 unit cost but smaller response).
+- Use **get_video_transcript** to get the full transcript/captions of a video. Does NOT use API quota (uses a separate transcript service).
+- Use **list_channel_videos** to browse a channel's video catalog. Costs 100 quota units (uses search internally).
+- YouTube video URLs are accepted wherever a video_id is required (standard URLs, short URLs, embed URLs, Shorts URLs).
+- Transcripts may not be available for all videos (e.g., if captions are disabled by the uploader).
+- To add a YouTube video as a NotebookLM source, first get the video URL, then use **add_source** with source_type "url".
+- Prefer get_video_info (1 unit) over search_youtube (100 units) when you already have a video ID or URL.`
+```
+
+### 10.7 Dependency Changes (`package.json`)
+
+Add to `dependencies`:
+
+```json
+{
+  "dependencies": {
+    "@google/adk": "^0.6.1",
+    "dotenv": "^16.4.7",
+    "youtube-transcript-plus": "^1.2.0",
+    "zod": "^4.3.6"
+  }
+}
+```
+
+### 10.8 Updated Tool Summary Table
+
+| Category | Tool Function | `require_confirmation` | Writes Session State | Timeout / Notes |
+|----------|--------------|:---:|:---:|:---:|
+| Auth | `check_auth` | No | No | FAST (30s) |
+| Notebooks | `list_notebooks` | No | No | FAST |
+| | `get_notebook` | No | Yes | FAST |
+| | `create_notebook` | No | Yes | FAST |
+| | `rename_notebook` | No | No | FAST |
+| | `delete_notebook` | **Yes** | No | LONG (120s) |
+| | `describe_notebook` | No | No | MEDIUM (60s) |
+| Sources | `add_source` | No | No | MEDIUM |
+| | `list_sources` | No | No | FAST |
+| | `describe_source` | No | No | MEDIUM |
+| | `get_source_content` | No | No | MEDIUM |
+| | `delete_source` | **Yes** | No | LONG |
+| | `check_stale_sources` | No | No | FAST |
+| | `sync_sources` | No | No | MEDIUM |
+| Queries | `query_notebook` | No | Yes | MEDIUM |
+| Studio | `create_audio` | No | No | MEDIUM |
+| | `create_video` | No | No | MEDIUM |
+| | `create_report` | No | No | MEDIUM |
+| | `create_quiz` | No | No | MEDIUM |
+| | `create_flashcards` | No | No | MEDIUM |
+| | `create_mindmap` | No | No | MEDIUM |
+| | `create_slides` | No | No | MEDIUM |
+| | `create_infographic` | No | No | MEDIUM |
+| | `create_data_table` | No | No | MEDIUM |
+| | `studio_status` | No | No | FAST |
+| Downloads | `download_artifact` | No | No | LONG |
+| Sharing | `share_status` | No | No | FAST |
+| | `share_public` | No | No | MEDIUM |
+| | `share_private` | No | No | MEDIUM |
+| | `share_invite` | No | No | MEDIUM |
+| Aliases | `list_aliases` | No | No | FAST |
+| | `set_alias` | No | No | FAST |
+| | `get_alias` | No | No | FAST |
+| | `delete_alias` | No | No | FAST |
+| Research | `start_research` | No | No | LONG |
+| | `research_status` | No | No | EXTRA_LONG (360s) |
+| | `import_research` | No | No | LONG |
+| Notes | `list_notes` | No | No | FAST |
+| | `create_note` | No | No | MEDIUM |
+| | `update_note` | No | No | MEDIUM |
+| | `delete_note` | **Yes** | No | MEDIUM |
+| **YouTube** | **`search_youtube`** | No | No | 10s fetch timeout; 100 quota units |
+| | **`get_video_info`** | No | No | 10s fetch timeout; 1 quota unit |
+| | **`get_video_description`** | No | No | 10s fetch timeout; 1 quota unit |
+| | **`get_video_transcript`** | No | No | 10s fetch timeout; 0 quota units |
+| | **`list_channel_videos`** | No | No | 10s fetch timeout; 101 quota units |
+
+**Total: 46 tools** (4 with `require_confirmation`, 3 write session state)
+
+### 10.9 Module Dependency Diagram (Updated)
+
+```
+config.ts
+    ^
+    |---------------------------+
+    |                           |
+nlm-runner.ts  <-- parsers.ts  youtube-client.ts
+    ^               ^  ^             ^
+    |               |  |             |
+    +---+---+---+  |  +-------------+
+    |   |   |   |  |  |
+  auth nb src qry  |  youtube-tools.ts
+  ...              |       |
+                   +-------+
+                   |
+                agent.ts
+                   |
+                   v
+              tools/index.ts --> rootAgent
+```
+
+Key difference: `youtube-tools.ts` depends on `youtube-client.ts` (not `nlm-runner.ts`) for its infrastructure layer, and on `parsers.ts` for `truncateText` and `truncateList`.
+
+### 10.10 Error Handling for YouTube Tools
+
+YouTube tools follow the same error classification strategy as NLM tools, producing status values compatible with `NlmStatus`:
+
+| Error Source | Classified Status | LLM Should Tell User |
+|---|---|---|
+| HTTP 400 from YouTube API | `error` | "The request was invalid. Check the parameters." |
+| HTTP 403 + quotaExceeded | `rate_limit` | "YouTube API daily quota exceeded. Wait until midnight PT." |
+| HTTP 403 + other | `config_error` | "Check YOUTUBE_API_KEY in .env and ensure YouTube Data API v3 is enabled." |
+| HTTP 404 | `not_found` | "Video/channel not found." |
+| HTTP 429 | `rate_limit` | "Too many requests. Wait before retrying." |
+| HTTP 5xx | `error` | "YouTube server error. Try again later." |
+| Network timeout | `error` | "Request timed out. Try again." |
+| `YoutubeTranscriptDisabledError` | `error` | "Transcripts are disabled for this video." |
+| `YoutubeTranscriptNotAvailableError` | `error` | "No transcript available for this video." |
+| `YoutubeTranscriptNotAvailableLanguageError` | `error` | Includes available languages in message. |
+| `YoutubeTranscriptTooManyRequestError` | `rate_limit` | "Transcript service rate limited. Try later." |
+| `YoutubeTranscriptVideoUnavailableError` | `not_found` | "Video not found or removed." |
+| Invalid video ID / URL | `error` | "Could not parse video ID from the input." |
+| Missing YOUTUBE_API_KEY | `config_error` (thrown at startup) | "YOUTUBE_API_KEY environment variable is required." |
+
+### 10.11 API Quota Impact Reference
+
+| YouTube Tool | Endpoint Used | Quota Cost (units) |
+|---|---|---|
+| `search_youtube` | `search.list` | 100 |
+| `get_video_info` | `videos.list` | 1 |
+| `get_video_description` | `videos.list` | 1 |
+| `get_video_transcript` | None (Innertube scraping) | 0 |
+| `list_channel_videos` | `channels.list` + `search.list` | 1 + 100 = 101 |
+
+With the free tier of 10,000 units/day:
+- ~100 `search_youtube` calls per day
+- ~10,000 `get_video_info` or `get_video_description` calls per day
+- Unlimited `get_video_transcript` calls (no quota cost)
+- ~99 `list_channel_videos` calls per day
+
+### 10.12 Updated Appendix A: Tool Count vs Context Window Impact
+
+With 46 tools, the LLM's context window will include all 46 tool schemas. Estimated token consumption:
+
+- Average tool schema: ~100-150 tokens
+- 46 tools: ~4,600-6,900 tokens for tool schemas
+- System prompt (with YouTube section): ~850 tokens
+- Total fixed overhead: ~5,500-7,800 tokens per turn
+
+This remains well within Gemini 2.5 Flash's context window. The 5 additional YouTube tools add approximately 500-750 tokens of schema overhead per turn.

@@ -53,6 +53,12 @@ import {
   createNoteTool,
   updateNoteTool,
   deleteNoteTool,
+  // YouTube
+  searchYoutubeTool,
+  getVideoInfoTool,
+  getVideoDescriptionTool,
+  getVideoTranscriptTool,
+  listChannelVideosTool,
 } from './tools/index.ts';
 
 // Note: Destructive tools (delete_notebook, delete_source, delete_note) rely on the system
@@ -82,7 +88,7 @@ function buildInstruction(ctx: ReadonlyContext): string {
 
 ## Capabilities
 
-You can manage notebooks, sources, queries, studio content (audio, video, reports, quizzes, flashcards, mind maps, slides, infographics, data tables), downloads, sharing, research, aliases, and notes.
+You can manage notebooks, sources, queries, studio content (audio, video, reports, quizzes, flashcards, mind maps, slides, infographics, data tables), downloads, sharing, research, aliases, notes, and YouTube content (search, video info, transcripts, channel browsing).
 
 ## Tool Usage Guidelines
 
@@ -112,7 +118,19 @@ You can chain operations. For example:
 - Format notebook/source lists as readable bullet points
 - Always include IDs when referencing notebooks or sources so the user can refer to them
 - When operations succeed, confirm what was done
-- When operations fail, explain why and suggest next steps`;
+- When operations fail, explain why and suggest next steps
+
+## YouTube Tools
+
+- Use **search_youtube** to find videos by topic, keyword, or partial title. Costs 100 API quota units per call -- use sparingly.
+- Use **get_video_info** for comprehensive metadata (views, duration, tags, publish date). Costs only 1 quota unit.
+- Use **get_video_description** for just the description text (same 1 unit cost but smaller response).
+- Use **get_video_transcript** to get the full transcript/captions of a video. Does NOT use API quota (uses a separate transcript service).
+- Use **list_channel_videos** to browse a channel's video catalog. Costs 100 quota units (uses search internally).
+- YouTube video URLs are accepted wherever a video_id is required (standard URLs, short URLs, embed URLs, Shorts URLs).
+- Transcripts may not be available for all videos (e.g., if captions are disabled by the uploader).
+- To add a YouTube video as a NotebookLM source, first get the video URL, then use **add_source** with source_type "url".
+- Prefer get_video_info (1 unit) over search_youtube (100 units) when you already have a video ID or URL.`;
 }
 
 // Export the root agent for ADK discovery
@@ -173,5 +191,11 @@ export const rootAgent = new LlmAgent({
     createNoteTool,
     updateNoteTool,
     deleteNoteTool,
+    // YouTube
+    searchYoutubeTool,
+    getVideoInfoTool,
+    getVideoDescriptionTool,
+    getVideoTranscriptTool,
+    listChannelVideosTool,
   ],
 });

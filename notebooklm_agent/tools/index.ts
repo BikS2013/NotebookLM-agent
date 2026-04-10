@@ -76,3 +76,12 @@ export {
   updateNoteTool,
   deleteNoteTool,
 } from './note-tools.ts';
+
+// YouTube
+export {
+  searchYoutubeTool,
+  getVideoInfoTool,
+  getVideoDescriptionTool,
+  getVideoTranscriptTool,
+  listChannelVideosTool,
+} from './youtube-tools.ts';

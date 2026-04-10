@@ -11,6 +11,7 @@ describe('config', () => {
     delete process.env.NLM_CLI_PATH;
     delete process.env.GEMINI_MODEL;
     delete process.env.NLM_DOWNLOAD_DIR;
+    delete process.env.YOUTUBE_API_KEY;
   });
 
   afterEach(() => {
@@ -24,6 +25,7 @@ describe('config', () => {
     process.env.NLM_CLI_PATH = '/usr/local/bin/nlm';
     process.env.GEMINI_MODEL = 'gemini-2.0-flash';
     process.env.NLM_DOWNLOAD_DIR = '/tmp/downloads';
+    process.env.YOUTUBE_API_KEY = 'test-youtube-key';
   }
 
   it('throws Error when GOOGLE_GENAI_API_KEY is missing', () => {
@@ -67,6 +69,7 @@ describe('config', () => {
     expect(config.nlmCliPath).toBe('/usr/local/bin/nlm');
     expect(config.geminiModel).toBe('gemini-2.0-flash');
     expect(config.nlmDownloadDir).toBe('/tmp/downloads');
+    expect(config.youtubeApiKey).toBe('test-youtube-key');
   });
 
   it('returns a frozen (immutable) config object', () => {
