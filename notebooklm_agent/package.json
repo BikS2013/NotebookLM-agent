@@ -1,0 +1,6 @@
+{
+  "name": "notebooklm_agent",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "agent.ts"
+}

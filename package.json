@@ -1,0 +1,24 @@
+{
+  "name": "notebooklm-adk-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "notebooklm_agent/agent.ts",
+  "scripts": {
+    "web": "npx adk web",
+    "run": "npx adk run notebooklm_agent",
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google/adk": "^0.6.1",
+    "dotenv": "^16.4.7",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@google/adk-devtools": "^0.2.1",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
