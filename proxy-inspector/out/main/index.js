@@ -33,7 +33,7 @@ const IPC = {
   GET_RECENT_FILES: "proxy-inspector:get-recent-files",
   NEW_EVENTS: "proxy-inspector:new-events"
 };
-const VALID_EVENTS = /* @__PURE__ */ new Set([
+const ADK_EVENTS = /* @__PURE__ */ new Set([
   "interaction_start",
   "llm_request",
   "llm_response",
@@ -43,13 +43,23 @@ const VALID_EVENTS = /* @__PURE__ */ new Set([
   "llm_error",
   "interaction_end"
 ]);
-function validateEntry(obj, lineIndex) {
-  if (obj === null || typeof obj !== "object") return null;
-  const record = obj;
-  if (typeof record.event !== "string" || !VALID_EVENTS.has(record.event)) {
-    console.warn(`[ndjson-parser] Invalid event type: ${String(record.event)}`);
-    return null;
+const LANGGRAPH_EVENTS = /* @__PURE__ */ new Set([
+  "llm_call_start",
+  "llm_call_end",
+  "tool_call_start",
+  "tool_call_end",
+  "turn_summary"
+]);
+function detectFormat(obj) {
+  if (typeof obj.event === "string" && ADK_EVENTS.has(obj.event)) {
+    return "adk-proxy";
   }
+  if (typeof obj.type === "string" && LANGGRAPH_EVENTS.has(obj.type)) {
+    return "langgraph";
+  }
+  return null;
+}
+function validateAdkEntry(record, lineIndex) {
   if (typeof record.interactionId !== "string" || record.interactionId.length === 0) {
     console.warn("[ndjson-parser] Missing or empty interactionId");
     return null;
@@ -67,9 +77,78 @@ function validateEntry(obj, lineIndex) {
     lineIndex
   };
 }
+function normalizeLangGraphEntry(record, lineIndex) {
+  const eventType = record.type;
+  const data = record.data;
+  if (!data || typeof data !== "object") return null;
+  const interactionId = `lg-temp-${lineIndex}`;
+  const timestamp = data.timestamp ?? data.startTime ?? (/* @__PURE__ */ new Date()).toISOString();
+  const payload = { ...data };
+  return {
+    event: eventType,
+    timestamp,
+    interactionId,
+    roundTrip: void 0,
+    payload,
+    lineIndex
+  };
+}
+function groupByTurns(entries) {
+  if (entries.length === 0) return entries;
+  const turnSummaryIndices = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i].event === "turn_summary") {
+      turnSummaryIndices.push(i);
+    }
+  }
+  if (turnSummaryIndices.length === 0) {
+    const id = "lg-turn-pending";
+    return entries.map((e) => ({ ...e, interactionId: id }));
+  }
+  const result = [];
+  let prevBoundary = 0;
+  for (const tsIdx of turnSummaryIndices) {
+    const ts = entries[tsIdx];
+    const data = ts.payload;
+    const threadId = data.threadId ?? "unknown";
+    const turnNumber = data.turnNumber ?? 0;
+    const turnId = `lg-${threadId}-turn-${turnNumber}`;
+    for (let i = prevBoundary; i <= tsIdx; i++) {
+      result.push({ ...entries[i], interactionId: turnId });
+    }
+    prevBoundary = tsIdx + 1;
+  }
+  if (prevBoundary < entries.length) {
+    const lastTurn = entries[turnSummaryIndices[turnSummaryIndices.length - 1]];
+    const threadId = lastTurn.payload.threadId ?? "unknown";
+    const lastTurnNum = lastTurn.payload.turnNumber ?? 0;
+    const pendingId = `lg-${threadId}-turn-${lastTurnNum + 1}`;
+    for (let i = prevBoundary; i < entries.length; i++) {
+      result.push({ ...entries[i], interactionId: pendingId });
+    }
+  }
+  return result;
+}
 function createNdjsonParser() {
   let remainder = "";
   let lineCount = 0;
+  let detectedFormat = null;
+  function parseOne(obj, lineIndex) {
+    const format = detectFormat(obj);
+    if (format === null) {
+      console.warn(`[ndjson-parser] Unrecognized format at line ~${lineIndex}`);
+      return null;
+    }
+    if (detectedFormat === null) {
+      detectedFormat = format;
+      console.log(`[ndjson-parser] Detected log format: ${format}`);
+    }
+    if (format === "adk-proxy") {
+      return validateAdkEntry(obj, lineIndex);
+    } else {
+      return normalizeLangGraphEntry(obj, lineIndex);
+    }
+  }
   function push(rawChunk) {
     const combined = remainder + rawChunk;
     const segments = combined.split("\n");
@@ -80,7 +159,7 @@ function createNdjsonParser() {
       if (trimmed.length === 0) continue;
       try {
         const parsed = JSON.parse(trimmed);
-        const entry = validateEntry(parsed, lineCount);
+        const entry = parseOne(parsed, lineCount);
         if (entry !== null) {
           results.push(entry);
           lineCount++;
@@ -100,7 +179,7 @@ function createNdjsonParser() {
     remainder = "";
     try {
       const parsed = JSON.parse(trimmed);
-      const entry = validateEntry(parsed, lineCount);
+      const entry = parseOne(parsed, lineCount);
       if (entry !== null) {
         lineCount++;
         return [entry];
@@ -113,6 +192,7 @@ function createNdjsonParser() {
   function reset() {
     remainder = "";
     lineCount = 0;
+    detectedFormat = null;
   }
   return {
     push,
@@ -120,10 +200,22 @@ function createNdjsonParser() {
     reset,
     get lineCount() {
       return lineCount;
+    },
+    get detectedFormat() {
+      return detectedFormat;
     }
   };
 }
 function deriveSummary(id, index, events) {
+  const isLangGraph = events.some(
+    (e) => e.event === "turn_summary" || e.event === "llm_call_start" || e.event === "llm_call_end"
+  );
+  if (isLangGraph) {
+    return deriveLangGraphSummary(id, index, events);
+  }
+  return deriveAdkSummary(id, index, events);
+}
+function deriveAdkSummary(id, index, events) {
   const startEvent = events.find((e) => e.event === "interaction_start");
   const endEvent = events.find((e) => e.event === "interaction_end");
   const hasErrors = events.some(
@@ -147,6 +239,46 @@ function deriveSummary(id, index, events) {
     totalPromptTokens: endEvent?.payload?.totalPromptTokens ?? 0,
     totalCompletionTokens: endEvent?.payload?.totalCompletionTokens ?? 0,
     totalTokens: endEvent?.payload?.totalTokens ?? 0,
+    toolCalls,
+    hasErrors,
+    eventCount: events.length
+  };
+}
+function deriveLangGraphSummary(id, index, events) {
+  const turnSummary = events.find((e) => e.event === "turn_summary");
+  const llmEnds = events.filter((e) => e.event === "llm_call_end");
+  const toolStarts = events.filter((e) => e.event === "tool_call_start");
+  const hasErrors = false;
+  const userMessage = turnSummary?.payload?.userInput ?? "";
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  if (turnSummary?.payload?.totalTokenUsage) {
+    const usage = turnSummary.payload.totalTokenUsage;
+    totalPromptTokens = usage.input_tokens ?? 0;
+    totalCompletionTokens = usage.output_tokens ?? 0;
+  } else {
+    for (const llmEnd of llmEnds) {
+      const usage = llmEnd.payload?.tokenUsage;
+      if (usage) {
+        totalPromptTokens += usage.input_tokens ?? 0;
+        totalCompletionTokens += usage.output_tokens ?? 0;
+      }
+    }
+  }
+  const toolCalls = toolStarts.map((e) => e.payload?.toolName ?? "unknown");
+  const durationMs = turnSummary?.payload?.turnDurationMs ?? null;
+  const status = turnSummary ? "complete" : "in-progress";
+  return {
+    id,
+    index,
+    userMessage: userMessage.slice(0, 100),
+    timestamp: turnSummary?.timestamp ?? events[0].timestamp,
+    status,
+    durationMs,
+    roundTripCount: turnSummary?.payload?.llmCallCount ?? llmEnds.length,
+    totalPromptTokens,
+    totalCompletionTokens,
+    totalTokens: totalPromptTokens + totalCompletionTokens,
     toolCalls,
     hasErrors,
     eventCount: events.length
@@ -350,17 +482,28 @@ function createFileTailer(filePath, callbacks) {
 const CONFIG_DIR$1 = path__namespace.join(os__namespace.homedir(), ".proxy-inspector");
 const RECENT_FILE = path__namespace.join(CONFIG_DIR$1, "recent.json");
 const MAX_RECENT = 10;
-const FILENAME_RE = /proxy-([a-f0-9-]{36})-(\d{4}-\d{2}-\d{2}T[\d-]+)\.ndjson$/;
+const ADK_FILENAME_RE = /proxy-([a-f0-9-]{36})-(\d{4}-\d{2}-\d{2}T[\d-]+)\.ndjson$/;
+const LG_FILENAME_RE = /monitoring-([a-z0-9]+)-(\d{4}-\d{2}-\d{2}T[\d-]+Z?)\.jsonl$/;
 function createFileManager(mainWindow) {
   function parseFilename(filePath) {
     const basename = path__namespace.basename(filePath);
-    const match = basename.match(FILENAME_RE);
-    if (match) {
-      const sessionId = match[1];
-      const rawTimestamp = match[2];
+    const adkMatch = basename.match(ADK_FILENAME_RE);
+    if (adkMatch) {
+      const sessionId = adkMatch[1];
+      const rawTimestamp = adkMatch[2];
       const createdAt = rawTimestamp.replace(
         /T(\d{2})-(\d{2})-(\d{2})/,
         "T$1:$2:$3"
+      );
+      return { sessionId, createdAt };
+    }
+    const lgMatch = basename.match(LG_FILENAME_RE);
+    if (lgMatch) {
+      const sessionId = lgMatch[1];
+      const rawTimestamp = lgMatch[2];
+      const createdAt = rawTimestamp.replace(
+        /T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z?/,
+        "T$1:$2:$3.$4Z"
       );
       return { sessionId, createdAt };
     }
@@ -471,8 +614,11 @@ function openAndParseFile(filePath) {
   const fileInfo = fileManager.openFilePath(filePath);
   const content = fs__namespace.readFileSync(filePath, "utf8");
   const parser = createNdjsonParser();
-  const entries = parser.push(content);
+  let entries = parser.push(content);
   entries.push(...parser.flush());
+  if (parser.detectedFormat === "langgraph") {
+    entries = groupByTurns(entries);
+  }
   store.addEntries(entries);
   const { tailer, parser: tailParser } = createTailerAndParser(filePath);
   currentTailer = tailer;
@@ -484,7 +630,8 @@ function openAndParseFile(filePath) {
       filePath: fileInfo.filePath,
       sessionId: fileInfo.sessionId,
       createdAt: fileInfo.createdAt,
-      fileSize: fileInfo.fileSize
+      fileSize: fileInfo.fileSize,
+      logFormat: parser.detectedFormat ?? "adk-proxy"
     },
     interactions: store.getAllSummaries(),
     aggregates: store.getAggregates()

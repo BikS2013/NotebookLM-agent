@@ -1,6 +1,8 @@
-/* ── Proxy Inspector — Dark Theme (Catppuccin Mocha) ── */
+/* ── Proxy Inspector — Theming ── */
 
-:root {
+/* ── Dark Theme (Catppuccin Mocha) — default ── */
+:root,
+:root[data-theme="dark"] {
   /* ── Background ── */
   --bg-primary: #1e1e2e;
   --bg-secondary: #313244;
@@ -48,6 +50,45 @@
   /* ── Border ── */
   --border-color: #45475a;
   --border-radius: 6px;
+
+  /* ── Scrollbar ── */
+  --scrollbar-thumb: #585b70;
+  --scrollbar-track: transparent;
+}
+
+/* ── Light Theme (Catppuccin Latte) ── */
+:root[data-theme="light"] {
+  --bg-primary: #eff1f5;
+  --bg-secondary: #e6e9ef;
+  --bg-surface: #ccd0da;
+  --bg-hover: #bcc0cc;
+
+  --text-primary: #4c4f69;
+  --text-secondary: #6c6f85;
+  --text-dim: #9ca0b0;
+
+  --accent-blue: #1e66f5;
+  --accent-green: #40a02b;
+  --accent-orange: #fe640b;
+  --accent-teal: #179299;
+  --accent-mauve: #8839ef;
+
+  --success: #40a02b;
+  --warning: #df8e1d;
+  --error: #d20f39;
+  --error-bg: rgba(210, 15, 57, 0.08);
+
+  --event-start: #9ca0b0;
+  --event-llm-req: #1e66f5;
+  --event-llm-res: #40a02b;
+  --event-tool: #fe640b;
+  --event-result: #179299;
+  --event-error: #d20f39;
+  --event-end: #9ca0b0;
+
+  --border-color: #ccd0da;
+  --scrollbar-thumb: #bcc0cc;
+  --scrollbar-track: transparent;
 }
 
 * {
@@ -100,9 +141,55 @@ pre, code, .selectable {
 
 .content-area {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  /* grid-template-columns set inline: <panel>px auto 1fr */
+  grid-template-columns: 320px auto 1fr;
   overflow: hidden;
   border-top: 1px solid var(--border-color);
+}
+
+.interaction-list-container {
+  overflow: hidden;
+  transition: width 0.15s ease;
+}
+
+/* ── Resize handle + collapse toggle ── */
+.resize-handle-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 12px;
+  position: relative;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+}
+
+.resize-handle {
+  flex: 1;
+  width: 100%;
+  cursor: col-resize;
+}
+.resize-handle:hover {
+  background: var(--accent-blue);
+  opacity: 0.3;
+}
+
+.collapse-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 24px;
+  padding: 0;
+  font-size: 8px;
+  color: var(--text-dim);
+  background: var(--bg-surface);
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.collapse-toggle-btn:hover {
+  color: var(--accent-blue);
 }
 
 /* ── Toolbar ── */
@@ -137,6 +224,11 @@ pre, code, .selectable {
 }
 .toolbar-btn:hover {
   background: var(--bg-hover);
+}
+.toolbar-btn-icon {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .toolbar-file-name {
@@ -211,10 +303,30 @@ pre, code, .selectable {
   color: var(--text-dim);
 }
 
+.theme-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.theme-toggle-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+}
+
 /* ── Interaction List (left panel) ── */
 .interaction-list {
+  height: 100%;
   overflow-y: auto;
-  border-right: 1px solid var(--border-color);
   background: var(--bg-primary);
 }
 
@@ -356,6 +468,28 @@ pre, code, .selectable {
   color: var(--text-secondary);
 }
 
+.detail-header-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.expand-collapse-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.expand-collapse-btn:hover {
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+  background: rgba(137, 180, 250, 0.1);
+}
+
 /* ── Event Timeline ── */
 .event-timeline {
   position: relative;
@@ -437,6 +571,45 @@ pre, code, .selectable {
 .event-card-info {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.event-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.raw-toggle-btn {
+  padding: 1px 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.raw-toggle-btn:hover {
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+  background: rgba(137, 180, 250, 0.1);
+}
+
+.copy-feedback {
+  font-size: 10px;
+  color: var(--accent-green);
+  animation: copy-fade 1.5s ease forwards;
+  white-space: nowrap;
+}
+@keyframes copy-fade {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .event-card-body {
@@ -628,6 +801,34 @@ pre, code, .selectable {
   font-size: 12px;
   line-height: 1.6;
   user-select: text;
+}
+
+.json-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.json-viewer-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.json-expand-btn {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.json-expand-btn:hover {
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
 }
 
 .json-key {

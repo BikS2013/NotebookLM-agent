@@ -26,9 +26,10 @@ const CONFIG_DIR = path.join(os.homedir(), '.proxy-inspector');
 const RECENT_FILE = path.join(CONFIG_DIR, 'recent.json');
 const MAX_RECENT = 10;
 
-// Matches: proxy-<uuid>-<ISO-timestamp>.ndjson
-// Example: proxy-36d86b1d-cb79-4609-b8e5-1a777a25db08-2026-04-11T06-58-50.ndjson
-const FILENAME_RE = /proxy-([a-f0-9-]{36})-(\d{4}-\d{2}-\d{2}T[\d-]+)\.ndjson$/;
+// ADK proxy format: proxy-<uuid>-<ISO-timestamp>.ndjson
+const ADK_FILENAME_RE = /proxy-([a-f0-9-]{36})-(\d{4}-\d{2}-\d{2}T[\d-]+)\.ndjson$/;
+// LangGraph format: monitoring-<threadId>-<ISO-timestamp>.jsonl
+const LG_FILENAME_RE = /monitoring-([a-z0-9]+)-(\d{4}-\d{2}-\d{2}T[\d-]+Z?)\.jsonl$/;
 
 // ── Factory ──
 
@@ -36,16 +37,27 @@ export function createFileManager(mainWindow: BrowserWindow): FileManager {
 
   function parseFilename(filePath: string): { sessionId: string; createdAt: string } {
     const basename = path.basename(filePath);
-    const match = basename.match(FILENAME_RE);
 
-    if (match) {
-      const sessionId = match[1];
-      // Convert timestamp from filename format (dashes) to ISO-8601 (colons)
-      // e.g., 2026-04-11T06-58-50 -> 2026-04-11T06:58:50
-      const rawTimestamp = match[2];
+    // Try ADK proxy filename pattern
+    const adkMatch = basename.match(ADK_FILENAME_RE);
+    if (adkMatch) {
+      const sessionId = adkMatch[1];
+      const rawTimestamp = adkMatch[2];
       const createdAt = rawTimestamp.replace(
         /T(\d{2})-(\d{2})-(\d{2})/,
         'T$1:$2:$3'
+      );
+      return { sessionId, createdAt };
+    }
+
+    // Try LangGraph filename pattern
+    const lgMatch = basename.match(LG_FILENAME_RE);
+    if (lgMatch) {
+      const sessionId = lgMatch[1];
+      const rawTimestamp = lgMatch[2];
+      const createdAt = rawTimestamp.replace(
+        /T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z?/,
+        'T$1:$2:$3.$4Z'
       );
       return { sessionId, createdAt };
     }

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { EventEntry, ProxyEventType } from '@shared/types'
+import type { EventEntry, EventType } from '@shared/types'
 import { CollapsibleSection } from './CollapsibleSection'
 import { JsonViewer } from './JsonViewer'
 
@@ -8,7 +8,7 @@ interface EventCardProps {
   relativeMs: number
 }
 
-const EVENT_LABELS: Record<ProxyEventType, string> = {
+const EVENT_LABELS: Record<EventType, string> = {
   interaction_start: 'START',
   llm_request: 'LLM REQ',
   llm_response: 'LLM RES',
@@ -17,9 +17,15 @@ const EVENT_LABELS: Record<ProxyEventType, string> = {
   tool_error: 'TOOL ERR',
   llm_error: 'LLM ERR',
   interaction_end: 'END',
+  // LangGraph events
+  llm_call_start: 'LLM CALL',
+  llm_call_end: 'LLM DONE',
+  tool_call_start: 'TOOL CALL',
+  tool_call_end: 'TOOL DONE',
+  turn_summary: 'SUMMARY',
 }
 
-const EVENT_DOT_COLORS: Record<ProxyEventType, string> = {
+const EVENT_DOT_COLORS: Record<EventType, string> = {
   interaction_start: 'var(--event-start)',
   llm_request: 'var(--event-llm-req)',
   llm_response: 'var(--event-llm-res)',
@@ -28,6 +34,12 @@ const EVENT_DOT_COLORS: Record<ProxyEventType, string> = {
   tool_error: 'var(--event-error)',
   llm_error: 'var(--event-error)',
   interaction_end: 'var(--event-end)',
+  // LangGraph events
+  llm_call_start: 'var(--event-llm-req)',
+  llm_call_end: 'var(--event-llm-res)',
+  tool_call_start: 'var(--event-tool)',
+  tool_call_end: 'var(--event-result)',
+  turn_summary: 'var(--event-end)',
 }
 
 function formatRelativeMs(ms: number): string {
@@ -371,15 +383,69 @@ function InteractionEndBody({ payload }: { payload: Record<string, unknown> }): 
 
 // ── Main EventCard ──
 
+function extractTextContent(payload: Record<string, unknown>): string {
+  const lines: string[] = []
+  for (const [key, val] of Object.entries(payload)) {
+    if (val === undefined || val === null) continue
+    if (typeof val === 'string') {
+      lines.push(`${key}: ${val}`)
+    } else if (typeof val === 'number' || typeof val === 'boolean') {
+      lines.push(`${key}: ${String(val)}`)
+    } else if (Array.isArray(val)) {
+      lines.push(`${key}: [${val.length} items]`)
+      for (const item of val) {
+        if (typeof item === 'string') lines.push(`  - ${item}`)
+        else if (typeof item === 'object' && item !== null) {
+          const obj = item as Record<string, unknown>
+          // Common shapes: messages with role/content, tool calls with name
+          if (obj.role && obj.content) lines.push(`  [${String(obj.role)}] ${String(obj.content).slice(0, 500)}`)
+          else if (obj.name || obj.toolName) lines.push(`  - ${String(obj.name ?? obj.toolName)}`)
+          else lines.push(`  - ${JSON.stringify(item).slice(0, 200)}`)
+        }
+      }
+    } else {
+      lines.push(`${key}: ${JSON.stringify(val).slice(0, 300)}`)
+    }
+  }
+  return lines.join('\n')
+}
+
 export function EventCard({ event, relativeMs }: EventCardProps): JSX.Element {
   const [expanded, setExpanded] = useState(false)
+  const [rawMode, setRawMode] = useState(false)
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
   const dotColor = EVENT_DOT_COLORS[event.event]
   const label = EVENT_LABELS[event.event]
   const toolName =
     event.event === 'tool_start' || event.event === 'tool_result' || event.event === 'tool_error'
+      || event.event === 'tool_call_start' || event.event === 'tool_call_end'
       ? String(event.payload.toolName ?? '')
       : ''
   const eventDuration = event.payload.durationMs as number | undefined
+    ?? event.payload.latencyMs as number | undefined
+
+  const showCopyFeedback = (msg: string) => {
+    setCopyFeedback(msg)
+    setTimeout(() => setCopyFeedback(null), 1500)
+  }
+
+  const copyJson = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const json = JSON.stringify(event.payload, null, 2)
+    navigator.clipboard.writeText(json).then(
+      () => showCopyFeedback('JSON copied'),
+      () => showCopyFeedback('Copy failed')
+    )
+  }
+
+  const copyText = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const text = extractTextContent(event.payload)
+    navigator.clipboard.writeText(text).then(
+      () => showCopyFeedback('Text copied'),
+      () => showCopyFeedback('Copy failed')
+    )
+  }
 
   return (
     <div className="event-card">
@@ -395,30 +461,240 @@ export function EventCard({ event, relativeMs }: EventCardProps): JSX.Element {
         {eventDuration !== undefined && (
           <span className="event-card-info">{formatDuration(eventDuration)}</span>
         )}
+        {expanded && (
+          <div className="event-card-actions" onClick={e => e.stopPropagation()}>
+            {copyFeedback && <span className="copy-feedback">{copyFeedback}</span>}
+            <button className="raw-toggle-btn" onClick={copyJson} title="Copy payload as JSON">
+              CP JSON
+            </button>
+            <button className="raw-toggle-btn" onClick={copyText} title="Copy payload as text">
+              CP TEXT
+            </button>
+            <button
+              className="raw-toggle-btn"
+              onClick={() => setRawMode(r => !r)}
+              title={rawMode ? 'Switch to formatted view' : 'Switch to raw JSON view'}
+            >
+              {rawMode ? '{ }' : 'RAW'}
+            </button>
+          </div>
+        )}
       </div>
 
-      {expanded && renderBody(event)}
+      {expanded && (
+        rawMode
+          ? <div className="event-card-body"><JsonViewer data={event.payload} label="payload" defaultExpanded={true} /></div>
+          : renderBody(event)
+      )}
     </div>
   )
 }
 
-function renderBody(event: EventEntry): JSX.Element {
+function renderBody(event: EventEntry): React.ReactNode {
+  const p = event.payload
   switch (event.event) {
+    // ── ADK Proxy events ──
     case 'interaction_start':
-      return <InteractionStartBody payload={event.payload} />
+      return <InteractionStartBody payload={p} />
     case 'llm_request':
-      return <LlmRequestBody payload={event.payload} />
+      return <LlmRequestBody payload={p} />
     case 'llm_response':
-      return <LlmResponseBody payload={event.payload} />
+      return <LlmResponseBody payload={p} />
     case 'tool_start':
-      return <ToolStartBody payload={event.payload} />
+      return <ToolStartBody payload={p} />
     case 'tool_result':
-      return <ToolResultBody payload={event.payload} />
+      return <ToolResultBody payload={p} />
     case 'tool_error':
-      return <ErrorBody payload={event.payload} type="tool" />
+      return <ErrorBody payload={p} type="tool" />
     case 'llm_error':
-      return <ErrorBody payload={event.payload} type="llm" />
+      return <ErrorBody payload={p} type="llm" />
     case 'interaction_end':
-      return <InteractionEndBody payload={event.payload} />
+      return <InteractionEndBody payload={p} />
+    // ── LangGraph events ──
+    case 'llm_call_start':
+      return <LlmCallStartBody payload={p} />
+    case 'llm_call_end':
+      return <LlmCallEndBody payload={p} />
+    case 'tool_call_start':
+      return <ToolCallStartBody payload={p} />
+    case 'tool_call_end':
+      return <ToolCallEndBody payload={p} />
+    case 'turn_summary':
+      return <TurnSummaryBody payload={p} />
+    default:
+      return <JsonViewer data={p} label="payload" defaultExpanded={false} />
   }
+}
+
+// ── LangGraph body renderers ──
+
+function LlmCallStartBody({ payload }: { payload: Record<string, unknown> }) {
+  const model = String(payload.model ?? '')
+  const provider = String(payload.provider ?? '')
+  const messages = payload.messages as Array<Record<string, unknown>> | undefined
+
+  return (
+    <div className="event-body">
+      <div className="event-field">
+        <span className="event-field-label">Model:</span>
+        <span className="event-field-value" style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+          {model}
+        </span>
+      </div>
+      <div className="event-field">
+        <span className="event-field-label">Provider:</span>
+        <span className="event-field-value">{provider}</span>
+      </div>
+      {messages && messages.length > 0 && (
+        <CollapsibleSection title={`Messages (${messages.length})`} defaultOpen={false}>
+          {messages.map((msg, i) => (
+            <div key={i} className={`chat-bubble chat-${String(msg.role ?? 'unknown')}`}>
+              <div className="chat-role">{String(msg.role ?? 'unknown')}</div>
+              <div className="chat-content">{String(msg.content ?? '').slice(0, 500)}</div>
+            </div>
+          ))}
+        </CollapsibleSection>
+      )}
+      {payload.extraParams && (
+        <CollapsibleSection title="Extra Params" defaultOpen={false}>
+          <JsonViewer data={payload.extraParams} label="extraParams" defaultExpanded={false} />
+        </CollapsibleSection>
+      )}
+    </div>
+  )
+}
+
+function LlmCallEndBody({ payload }: { payload: Record<string, unknown> }) {
+  const content = String(payload.content ?? '')
+  const toolCalls = payload.toolCalls as Array<Record<string, unknown>> | undefined
+  const usage = payload.tokenUsage as Record<string, number> | undefined
+  const latency = payload.latencyMs as number | undefined
+
+  return (
+    <div className="event-body">
+      {content && (
+        <CollapsibleSection title="Response" defaultOpen={true}>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', padding: '8px', background: 'var(--bg-primary)', borderRadius: '4px' }}>
+            {content.slice(0, 2000)}
+            {content.length > 2000 && '...'}
+          </div>
+        </CollapsibleSection>
+      )}
+      {toolCalls && toolCalls.length > 0 && (
+        <CollapsibleSection title={`Tool Calls (${toolCalls.length})`} defaultOpen={true}>
+          {toolCalls.map((tc, i) => (
+            <div key={i} style={{ marginBottom: '8px' }}>
+              <span className="badge badge-tool">{String(tc.name ?? tc.function ?? 'unknown')}</span>
+              <JsonViewer data={tc.args ?? tc} label="args" defaultExpanded={false} />
+            </div>
+          ))}
+        </CollapsibleSection>
+      )}
+      {usage && (
+        <div className="token-summary">
+          <span className="badge badge-info">in: {usage.input_tokens?.toLocaleString()}</span>
+          <span className="badge badge-info">out: {usage.output_tokens?.toLocaleString()}</span>
+          <span className="badge badge-info">total: {usage.total_tokens?.toLocaleString()}</span>
+        </div>
+      )}
+      {latency != null && (
+        <div className="event-field">
+          <span className="event-field-label">Latency:</span>
+          <span className="event-field-value">{(latency / 1000).toFixed(1)}s</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolCallStartBody({ payload }: { payload: Record<string, unknown> }) {
+  const toolName = String(payload.toolName ?? '')
+  return (
+    <div className="event-body">
+      <div className="event-field">
+        <span className="event-field-label">Tool:</span>
+        <span className="badge badge-tool">{toolName}</span>
+      </div>
+      {payload.args && (
+        <CollapsibleSection title="Arguments" defaultOpen={true}>
+          <JsonViewer data={payload.args} label="args" defaultExpanded={true} />
+        </CollapsibleSection>
+      )}
+    </div>
+  )
+}
+
+function ToolCallEndBody({ payload }: { payload: Record<string, unknown> }) {
+  const toolName = String(payload.toolName ?? '')
+  const durationMs = payload.durationMs as number | undefined
+  return (
+    <div className="event-body">
+      <div className="event-field">
+        <span className="event-field-label">Tool:</span>
+        <span className="badge badge-tool">{toolName}</span>
+        {durationMs != null && (
+          <span className="event-field-value" style={{ marginLeft: '8px' }}>
+            {(durationMs / 1000).toFixed(1)}s
+          </span>
+        )}
+      </div>
+      {payload.result && (
+        <CollapsibleSection title="Result" defaultOpen={false}>
+          <JsonViewer data={payload.result} label="result" defaultExpanded={false} />
+        </CollapsibleSection>
+      )}
+    </div>
+  )
+}
+
+function TurnSummaryBody({ payload }: { payload: Record<string, unknown> }) {
+  const userInput = String(payload.userInput ?? '')
+  const llmCallCount = payload.llmCallCount as number | undefined
+  const toolNames = payload.toolNames as string[] | undefined
+  const turnDuration = payload.turnDurationMs as number | undefined
+  const usage = payload.totalTokenUsage as Record<string, number> | undefined
+  const stateChanges = payload.stateChanges as unknown[] | undefined
+
+  return (
+    <div className="event-body">
+      <div className="event-field">
+        <span className="event-field-label">Turn:</span>
+        <span className="event-field-value">#{String(payload.turnNumber ?? '?')}</span>
+        {payload.level && (
+          <span className="badge badge-info" style={{ marginLeft: '8px' }}>{String(payload.level)}</span>
+        )}
+      </div>
+      {userInput && (
+        <div className="event-field">
+          <span className="event-field-label">User:</span>
+          <span className="event-field-value">{userInput.slice(0, 200)}</span>
+        </div>
+      )}
+      <div className="token-summary">
+        {llmCallCount != null && <span className="badge badge-info">LLM calls: {llmCallCount}</span>}
+        {usage && <span className="badge badge-info">tokens: {usage.total_tokens?.toLocaleString()}</span>}
+        {turnDuration != null && <span className="badge badge-info">{(turnDuration / 1000).toFixed(1)}s</span>}
+      </div>
+      {toolNames && toolNames.length > 0 && (
+        <div style={{ marginTop: '4px' }}>
+          {toolNames.map((t, i) => <span key={`${t}-${i}`} className="badge badge-tool">{t}</span>)}
+        </div>
+      )}
+      {stateChanges && stateChanges.length > 0 && (
+        <CollapsibleSection title={`State Changes (${stateChanges.length})`} defaultOpen={false}>
+          <JsonViewer data={stateChanges} label="stateChanges" defaultExpanded={false} />
+        </CollapsibleSection>
+      )}
+      {payload.stateBefore && (
+        <CollapsibleSection title="State Before" defaultOpen={false}>
+          <JsonViewer data={payload.stateBefore} label="stateBefore" defaultExpanded={false} />
+        </CollapsibleSection>
+      )}
+      {payload.stateAfter && (
+        <CollapsibleSection title="State After" defaultOpen={false}>
+          <JsonViewer data={payload.stateAfter} label="stateAfter" defaultExpanded={false} />
+        </CollapsibleSection>
+      )}
+    </div>
+  )
 }

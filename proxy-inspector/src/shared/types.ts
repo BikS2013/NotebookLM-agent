@@ -1,6 +1,7 @@
 // Re-declared from parent project's proxy-types.ts to avoid cross-project rootDir issues.
 // Keep in sync with notebooklm_agent/proxy/proxy-types.ts if event types change.
 
+// ADK proxy event types
 export type ProxyEventType =
   | 'interaction_start'
   | 'llm_request'
@@ -11,6 +12,20 @@ export type ProxyEventType =
   | 'llm_error'
   | 'interaction_end';
 
+// LangGraph monitoring event types
+export type LangGraphEventType =
+  | 'llm_call_start'
+  | 'llm_call_end'
+  | 'tool_call_start'
+  | 'tool_call_end'
+  | 'turn_summary';
+
+// Union of all supported event types
+export type EventType = ProxyEventType | LangGraphEventType;
+
+// Log file format detected during parsing
+export type LogFormat = 'adk-proxy' | 'langgraph';
+
 // ── Interaction status ──
 
 export type InteractionStatus = 'complete' | 'in-progress' | 'error';
@@ -19,7 +34,7 @@ export type InteractionStatus = 'complete' | 'in-progress' | 'error';
 
 export interface EventEntry {
   /** Event type identifier. */
-  event: ProxyEventType;
+  event: EventType;
 
   /** ISO-8601 timestamp of the event. */
   timestamp: string;
@@ -104,6 +119,9 @@ export interface FileMetadata {
 
   /** File size in bytes. */
   fileSize: number;
+
+  /** Detected log format. */
+  logFormat: LogFormat;
 }
 
 // ── AggregateStats ──

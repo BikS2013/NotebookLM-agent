@@ -34,6 +34,18 @@ export interface InteractionStore {
 // ── Summary derivation ──
 
 function deriveSummary(id: string, index: number, events: EventEntry[]): InteractionSummary {
+  // Detect format from events
+  const isLangGraph = events.some(e =>
+    e.event === 'turn_summary' || e.event === 'llm_call_start' || e.event === 'llm_call_end'
+  );
+
+  if (isLangGraph) {
+    return deriveLangGraphSummary(id, index, events);
+  }
+  return deriveAdkSummary(id, index, events);
+}
+
+function deriveAdkSummary(id: string, index: number, events: EventEntry[]): InteractionSummary {
   const startEvent = events.find(e => e.event === 'interaction_start');
   const endEvent = events.find(e => e.event === 'interaction_end');
   const hasErrors = events.some(e =>
@@ -45,7 +57,6 @@ function deriveSummary(id: string, index: number, events: EventEntry[]): Interac
     hasErrors ? 'error' :
     endEvent ? 'complete' : 'in-progress';
 
-  // Derive roundTripCount from interaction_end or from the max roundTrip field across events
   const endRoundTripCount = endEvent?.payload?.roundTripCount as number | undefined;
   const maxRoundTrip = events
     .filter(e => e.roundTrip != null)
@@ -53,7 +64,6 @@ function deriveSummary(id: string, index: number, events: EventEntry[]): Interac
   const roundTripCount = endRoundTripCount ??
     (maxRoundTrip.length > 0 ? Math.max(...maxRoundTrip) : 0);
 
-  // Derive tool calls from interaction_end or from tool_start events
   const endToolCalls = endEvent?.payload?.toolCalls as string[] | undefined;
   const toolCalls = endToolCalls ??
     events
@@ -71,6 +81,55 @@ function deriveSummary(id: string, index: number, events: EventEntry[]): Interac
     totalPromptTokens: (endEvent?.payload?.totalPromptTokens as number) ?? 0,
     totalCompletionTokens: (endEvent?.payload?.totalCompletionTokens as number) ?? 0,
     totalTokens: (endEvent?.payload?.totalTokens as number) ?? 0,
+    toolCalls,
+    hasErrors,
+    eventCount: events.length,
+  };
+}
+
+function deriveLangGraphSummary(id: string, index: number, events: EventEntry[]): InteractionSummary {
+  const turnSummary = events.find(e => e.event === 'turn_summary');
+  const llmEnds = events.filter(e => e.event === 'llm_call_end');
+  const toolStarts = events.filter(e => e.event === 'tool_call_start');
+  const hasErrors = false; // LangGraph doesn't have explicit error events in this format
+
+  // User message from turn_summary
+  const userMessage = (turnSummary?.payload?.userInput as string) ?? '';
+
+  // Token counts: sum from llm_call_end tokenUsage or from turn_summary totalTokenUsage
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+
+  if (turnSummary?.payload?.totalTokenUsage) {
+    const usage = turnSummary.payload.totalTokenUsage as Record<string, number>;
+    totalPromptTokens = usage.input_tokens ?? 0;
+    totalCompletionTokens = usage.output_tokens ?? 0;
+  } else {
+    for (const llmEnd of llmEnds) {
+      const usage = llmEnd.payload?.tokenUsage as Record<string, number> | undefined;
+      if (usage) {
+        totalPromptTokens += usage.input_tokens ?? 0;
+        totalCompletionTokens += usage.output_tokens ?? 0;
+      }
+    }
+  }
+
+  const toolCalls = toolStarts.map(e => (e.payload?.toolName as string) ?? 'unknown');
+  const durationMs = (turnSummary?.payload?.turnDurationMs as number) ?? null;
+
+  const status: InteractionStatus = turnSummary ? 'complete' : 'in-progress';
+
+  return {
+    id,
+    index,
+    userMessage: userMessage.slice(0, 100),
+    timestamp: turnSummary?.timestamp ?? events[0].timestamp,
+    status,
+    durationMs,
+    roundTripCount: (turnSummary?.payload?.llmCallCount as number) ?? llmEnds.length,
+    totalPromptTokens,
+    totalCompletionTokens,
+    totalTokens: totalPromptTokens + totalCompletionTokens,
     toolCalls,
     hasErrors,
     eventCount: events.length,

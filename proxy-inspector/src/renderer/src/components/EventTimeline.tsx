@@ -5,7 +5,7 @@ interface EventTimelineProps {
   events: EventEntry[]
 }
 
-export function EventTimeline({ events }: EventTimelineProps): JSX.Element {
+export function EventTimeline({ events }: EventTimelineProps) {
   if (events.length === 0) {
     return <div style={{ color: 'var(--text-dim)' }}>No events</div>
   }

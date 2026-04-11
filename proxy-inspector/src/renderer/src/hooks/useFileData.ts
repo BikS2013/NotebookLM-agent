@@ -16,6 +16,7 @@ export interface FileDataState {
 
 export function useFileData(): FileDataState & {
   openFile: () => Promise<void>
+  reloadFile: () => Promise<void>
 } {
   const [metadata, setMetadata] = useState<FileMetadata | null>(null)
   const [interactions, setInteractions] = useState<InteractionSummary[]>([])
@@ -60,5 +61,17 @@ export function useFileData(): FileDataState & {
     setIsLoading(false)
   }, [])
 
-  return { metadata, interactions, aggregates, isLoading, openFile }
+  const reloadFile = useCallback(async () => {
+    if (!metadata) return
+    setIsLoading(true)
+    const result = await window.api.openRecent(metadata.filePath)
+    if (result.ok) {
+      setMetadata(result.data.metadata)
+      setInteractions(result.data.interactions)
+      setAggregates(result.data.aggregates)
+    }
+    setIsLoading(false)
+  }, [metadata])
+
+  return { metadata, interactions, aggregates, isLoading, openFile, reloadFile }
 }

@@ -7,6 +7,9 @@ interface ToolbarProps {
   searchQuery: string
   onSearchChange: (query: string) => void
   onOpenFile: () => void
+  onReloadFile: () => void
+  theme: 'dark' | 'light'
+  onToggleTheme: () => void
 }
 
 function formatTokens(n: number): string {
@@ -22,7 +25,10 @@ export function Toolbar({
   searchQuery,
   onSearchChange,
   onOpenFile,
-}: ToolbarProps): JSX.Element {
+  onReloadFile,
+  theme,
+  onToggleTheme,
+}: ToolbarProps) {
   const fileName = metadata
     ? metadata.filePath.split('/').pop() ?? metadata.filePath
     : null
@@ -34,6 +40,12 @@ export function Toolbar({
       </button>
 
       {fileName && <span className="toolbar-file-name" title={metadata!.filePath}>{fileName}</span>}
+
+      {metadata && (
+        <button className="toolbar-btn toolbar-btn-icon" onClick={onReloadFile} title="Reload file">
+          ↻
+        </button>
+      )}
 
       {metadata && (
         <div className="watch-indicator">
@@ -65,6 +77,14 @@ export function Toolbar({
         value={searchQuery}
         onChange={e => onSearchChange(e.target.value)}
       />
+
+      <button
+        className="theme-toggle-btn"
+        onClick={onToggleTheme}
+        title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+      >
+        {theme === 'dark' ? '☀' : '☽'}
+      </button>
     </div>
   )
 }

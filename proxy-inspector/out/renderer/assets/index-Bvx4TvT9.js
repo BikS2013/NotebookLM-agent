@@ -12531,7 +12531,18 @@ function useFileData() {
     }
     setIsLoading(false);
   }, []);
-  return { metadata, interactions, aggregates, isLoading, openFile };
+  const reloadFile = reactExports.useCallback(async () => {
+    if (!metadata) return;
+    setIsLoading(true);
+    const result = await window.api.openRecent(metadata.filePath);
+    if (result.ok) {
+      setMetadata(result.data.metadata);
+      setInteractions(result.data.interactions);
+      setAggregates(result.data.aggregates);
+    }
+    setIsLoading(false);
+  }, [metadata]);
+  return { metadata, interactions, aggregates, isLoading, openFile, reloadFile };
 }
 function formatTokens$3(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
@@ -12544,12 +12555,16 @@ function Toolbar({
   isWatching,
   searchQuery,
   onSearchChange,
-  onOpenFile
+  onOpenFile,
+  onReloadFile,
+  theme,
+  onToggleTheme
 }) {
   const fileName = metadata ? metadata.filePath.split("/").pop() ?? metadata.filePath : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toolbar", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "toolbar-btn", onClick: onOpenFile, children: "Open File" }),
     fileName && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toolbar-file-name", title: metadata.filePath, children: fileName }),
+    metadata && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "toolbar-btn toolbar-btn-icon", onClick: onReloadFile, title: "Reload file", children: "↻" }),
     metadata && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "watch-indicator", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `watch-dot ${isWatching ? "active" : ""}` }),
       isWatching ? "Watching" : "Stopped"
@@ -12576,6 +12591,15 @@ function Toolbar({
         placeholder: "Search interactions...",
         value: searchQuery,
         onChange: (e) => onSearchChange(e.target.value)
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        className: "theme-toggle-btn",
+        onClick: onToggleTheme,
+        title: `Switch to ${theme === "dark" ? "light" : "dark"} theme`,
+        children: theme === "dark" ? "☀" : "☽"
       }
     )
   ] });
@@ -12789,15 +12813,39 @@ function CollapsibleSection({
   ] });
 }
 const MAX_STRING_LENGTH = 500;
+const ExpandAllContext = reactExports.createContext(0);
 function JsonViewer({
   data,
   label,
   defaultExpanded = false
 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "json-viewer", children: [
-    label && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { marginBottom: 4, fontWeight: 600, color: "var(--text-secondary)", fontSize: 11 }, children: label }),
+  const [expandAllSignal, setExpandAllSignal] = reactExports.useState(0);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(ExpandAllContext.Provider, { value: expandAllSignal, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "json-viewer", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "json-viewer-toolbar", children: [
+      label && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontWeight: 600, color: "var(--text-secondary)", fontSize: 11 }, children: label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "json-viewer-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "json-expand-btn",
+            onClick: () => setExpandAllSignal((s) => Math.abs(s) + 1),
+            title: "Expand all nodes",
+            children: "⊞ Expand All"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "json-expand-btn",
+            onClick: () => setExpandAllSignal((s) => -(Math.abs(s) + 1)),
+            title: "Collapse all nodes",
+            children: "⊟ Collapse All"
+          }
+        )
+      ] })
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(JsonNode, { value: data, defaultExpanded, depth: 0 })
-  ] });
+  ] }) });
 }
 function JsonNode({
   value,
@@ -12911,7 +12959,12 @@ function ObjectNode({
   keyName
 }) {
   const [expanded, setExpanded] = reactExports.useState(defaultExpanded);
+  const expandAllSignal = reactExports.useContext(ExpandAllContext);
   const keys = Object.keys(value);
+  reactExports.useEffect(() => {
+    if (expandAllSignal === 0) return;
+    setExpanded(expandAllSignal > 0);
+  }, [expandAllSignal]);
   if (keys.length === 0) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
       keyName !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -12972,6 +13025,11 @@ function ArrayNode({
   keyName
 }) {
   const [expanded, setExpanded] = reactExports.useState(defaultExpanded);
+  const expandAllSignal = reactExports.useContext(ExpandAllContext);
+  reactExports.useEffect(() => {
+    if (expandAllSignal === 0) return;
+    setExpanded(expandAllSignal > 0);
+  }, [expandAllSignal]);
   if (value.length === 0) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
       keyName !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -13032,7 +13090,13 @@ const EVENT_LABELS = {
   tool_result: "RESULT",
   tool_error: "TOOL ERR",
   llm_error: "LLM ERR",
-  interaction_end: "END"
+  interaction_end: "END",
+  // LangGraph events
+  llm_call_start: "LLM CALL",
+  llm_call_end: "LLM DONE",
+  tool_call_start: "TOOL CALL",
+  tool_call_end: "TOOL DONE",
+  turn_summary: "SUMMARY"
 };
 const EVENT_DOT_COLORS = {
   interaction_start: "var(--event-start)",
@@ -13042,7 +13106,13 @@ const EVENT_DOT_COLORS = {
   tool_result: "var(--event-result)",
   tool_error: "var(--event-error)",
   llm_error: "var(--event-error)",
-  interaction_end: "var(--event-end)"
+  interaction_end: "var(--event-end)",
+  // LangGraph events
+  llm_call_start: "var(--event-llm-req)",
+  llm_call_end: "var(--event-llm-res)",
+  tool_call_start: "var(--event-tool)",
+  tool_call_end: "var(--event-result)",
+  turn_summary: "var(--event-end)"
 };
 function formatRelativeMs(ms) {
   if (ms < 1e3) return `+${ms}ms`;
@@ -13252,12 +13322,59 @@ function InteractionEndBody({ payload }) {
     ] })
   ] });
 }
+function extractTextContent(payload) {
+  const lines = [];
+  for (const [key, val] of Object.entries(payload)) {
+    if (val === void 0 || val === null) continue;
+    if (typeof val === "string") {
+      lines.push(`${key}: ${val}`);
+    } else if (typeof val === "number" || typeof val === "boolean") {
+      lines.push(`${key}: ${String(val)}`);
+    } else if (Array.isArray(val)) {
+      lines.push(`${key}: [${val.length} items]`);
+      for (const item of val) {
+        if (typeof item === "string") lines.push(`  - ${item}`);
+        else if (typeof item === "object" && item !== null) {
+          const obj = item;
+          if (obj.role && obj.content) lines.push(`  [${String(obj.role)}] ${String(obj.content).slice(0, 500)}`);
+          else if (obj.name || obj.toolName) lines.push(`  - ${String(obj.name ?? obj.toolName)}`);
+          else lines.push(`  - ${JSON.stringify(item).slice(0, 200)}`);
+        }
+      }
+    } else {
+      lines.push(`${key}: ${JSON.stringify(val).slice(0, 300)}`);
+    }
+  }
+  return lines.join("\n");
+}
 function EventCard({ event, relativeMs }) {
   const [expanded, setExpanded] = reactExports.useState(false);
+  const [rawMode, setRawMode] = reactExports.useState(false);
+  const [copyFeedback, setCopyFeedback] = reactExports.useState(null);
   const dotColor = EVENT_DOT_COLORS[event.event];
   const label = EVENT_LABELS[event.event];
-  const toolName = event.event === "tool_start" || event.event === "tool_result" || event.event === "tool_error" ? String(event.payload.toolName ?? "") : "";
-  const eventDuration = event.payload.durationMs;
+  const toolName = event.event === "tool_start" || event.event === "tool_result" || event.event === "tool_error" || event.event === "tool_call_start" || event.event === "tool_call_end" ? String(event.payload.toolName ?? "") : "";
+  const eventDuration = event.payload.durationMs ?? event.payload.latencyMs;
+  const showCopyFeedback = (msg) => {
+    setCopyFeedback(msg);
+    setTimeout(() => setCopyFeedback(null), 1500);
+  };
+  const copyJson = (e) => {
+    e.stopPropagation();
+    const json = JSON.stringify(event.payload, null, 2);
+    navigator.clipboard.writeText(json).then(
+      () => showCopyFeedback("JSON copied"),
+      () => showCopyFeedback("Copy failed")
+    );
+  };
+  const copyText = (e) => {
+    e.stopPropagation();
+    const text = extractTextContent(event.payload);
+    navigator.clipboard.writeText(text).then(
+      () => showCopyFeedback("Text copied"),
+      () => showCopyFeedback("Copy failed")
+    );
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-card", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "event-card-dot", style: { background: dotColor } }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-card-header", onClick: () => setExpanded((e) => !e), children: [
@@ -13268,30 +13385,181 @@ function EventCard({ event, relativeMs }) {
         event.roundTrip
       ] }),
       toolName && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-card-info", children: toolName }),
-      eventDuration !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-card-info", children: formatDuration$1(eventDuration) })
+      eventDuration !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-card-info", children: formatDuration$1(eventDuration) }),
+      expanded && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-card-actions", onClick: (e) => e.stopPropagation(), children: [
+        copyFeedback && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "copy-feedback", children: copyFeedback }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "raw-toggle-btn", onClick: copyJson, title: "Copy payload as JSON", children: "CP JSON" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "raw-toggle-btn", onClick: copyText, title: "Copy payload as text", children: "CP TEXT" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "raw-toggle-btn",
+            onClick: () => setRawMode((r) => !r),
+            title: rawMode ? "Switch to formatted view" : "Switch to raw JSON view",
+            children: rawMode ? "{ }" : "RAW"
+          }
+        )
+      ] })
     ] }),
-    expanded && renderBody(event)
+    expanded && (rawMode ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "event-card-body", children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: event.payload, label: "payload", defaultExpanded: true }) }) : renderBody(event))
   ] });
 }
 function renderBody(event) {
+  const p = event.payload;
   switch (event.event) {
+    // ── ADK Proxy events ──
     case "interaction_start":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(InteractionStartBody, { payload: event.payload });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(InteractionStartBody, { payload: p });
     case "llm_request":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(LlmRequestBody, { payload: event.payload });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(LlmRequestBody, { payload: p });
     case "llm_response":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(LlmResponseBody, { payload: event.payload });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(LlmResponseBody, { payload: p });
     case "tool_start":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolStartBody, { payload: event.payload });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolStartBody, { payload: p });
     case "tool_result":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolResultBody, { payload: event.payload });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolResultBody, { payload: p });
     case "tool_error":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBody, { payload: event.payload, type: "tool" });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBody, { payload: p, type: "tool" });
     case "llm_error":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBody, { payload: event.payload, type: "llm" });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBody, { payload: p, type: "llm" });
     case "interaction_end":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(InteractionEndBody, { payload: event.payload });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(InteractionEndBody, { payload: p });
+    // ── LangGraph events ──
+    case "llm_call_start":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(LlmCallStartBody, { payload: p });
+    case "llm_call_end":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(LlmCallEndBody, { payload: p });
+    case "tool_call_start":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolCallStartBody, { payload: p });
+    case "tool_call_end":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolCallEndBody, { payload: p });
+    case "turn_summary":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(TurnSummaryBody, { payload: p });
+    default:
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: p, label: "payload", defaultExpanded: false });
   }
+}
+function LlmCallStartBody({ payload }) {
+  const model = String(payload.model ?? "");
+  const provider = String(payload.provider ?? "");
+  const messages = payload.messages;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-body", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "Model:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-value", style: { fontFamily: "var(--font-mono)", fontSize: "12px" }, children: model })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "Provider:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-value", children: provider })
+    ] }),
+    messages && messages.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: `Messages (${messages.length})`, defaultOpen: false, children: messages.map((msg, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-bubble chat-${String(msg.role ?? "unknown")}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-role", children: String(msg.role ?? "unknown") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-content", children: String(msg.content ?? "").slice(0, 500) })
+    ] }, i)) }),
+    payload.extraParams && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: "Extra Params", defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: payload.extraParams, label: "extraParams", defaultExpanded: false }) })
+  ] });
+}
+function LlmCallEndBody({ payload }) {
+  const content = String(payload.content ?? "");
+  const toolCalls = payload.toolCalls;
+  const usage = payload.tokenUsage;
+  const latency = payload.latencyMs;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-body", children: [
+    content && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: "Response", defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { whiteSpace: "pre-wrap", fontSize: "12px", fontFamily: "var(--font-mono)", color: "var(--text-primary)", padding: "8px", background: "var(--bg-primary)", borderRadius: "4px" }, children: [
+      content.slice(0, 2e3),
+      content.length > 2e3 && "..."
+    ] }) }),
+    toolCalls && toolCalls.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: `Tool Calls (${toolCalls.length})`, defaultOpen: true, children: toolCalls.map((tc, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: "8px" }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge badge-tool", children: String(tc.name ?? tc.function ?? "unknown") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: tc.args ?? tc, label: "args", defaultExpanded: false })
+    ] }, i)) }),
+    usage && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-summary", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "badge badge-info", children: [
+        "in: ",
+        usage.input_tokens?.toLocaleString()
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "badge badge-info", children: [
+        "out: ",
+        usage.output_tokens?.toLocaleString()
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "badge badge-info", children: [
+        "total: ",
+        usage.total_tokens?.toLocaleString()
+      ] })
+    ] }),
+    latency != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "Latency:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "event-field-value", children: [
+        (latency / 1e3).toFixed(1),
+        "s"
+      ] })
+    ] })
+  ] });
+}
+function ToolCallStartBody({ payload }) {
+  const toolName = String(payload.toolName ?? "");
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-body", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "Tool:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge badge-tool", children: toolName })
+    ] }),
+    payload.args && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: "Arguments", defaultOpen: true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: payload.args, label: "args", defaultExpanded: true }) })
+  ] });
+}
+function ToolCallEndBody({ payload }) {
+  const toolName = String(payload.toolName ?? "");
+  const durationMs = payload.durationMs;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-body", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "Tool:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge badge-tool", children: toolName }),
+      durationMs != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "event-field-value", style: { marginLeft: "8px" }, children: [
+        (durationMs / 1e3).toFixed(1),
+        "s"
+      ] })
+    ] }),
+    payload.result && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: "Result", defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: payload.result, label: "result", defaultExpanded: false }) })
+  ] });
+}
+function TurnSummaryBody({ payload }) {
+  const userInput = String(payload.userInput ?? "");
+  const llmCallCount = payload.llmCallCount;
+  const toolNames = payload.toolNames;
+  const turnDuration = payload.turnDurationMs;
+  const usage = payload.totalTokenUsage;
+  const stateChanges = payload.stateChanges;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-body", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "Turn:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "event-field-value", children: [
+        "#",
+        String(payload.turnNumber ?? "?")
+      ] }),
+      payload.level && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge badge-info", style: { marginLeft: "8px" }, children: String(payload.level) })
+    ] }),
+    userInput && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-field", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-label", children: "User:" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-field-value", children: userInput.slice(0, 200) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-summary", children: [
+      llmCallCount != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "badge badge-info", children: [
+        "LLM calls: ",
+        llmCallCount
+      ] }),
+      usage && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "badge badge-info", children: [
+        "tokens: ",
+        usage.total_tokens?.toLocaleString()
+      ] }),
+      turnDuration != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "badge badge-info", children: [
+        (turnDuration / 1e3).toFixed(1),
+        "s"
+      ] })
+    ] }),
+    toolNames && toolNames.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { marginTop: "4px" }, children: toolNames.map((t, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge badge-tool", children: t }, `${t}-${i}`)) }),
+    stateChanges && stateChanges.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: `State Changes (${stateChanges.length})`, defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: stateChanges, label: "stateChanges", defaultExpanded: false }) }),
+    payload.stateBefore && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: "State Before", defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: payload.stateBefore, label: "stateBefore", defaultExpanded: false }) }),
+    payload.stateAfter && /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleSection, { title: "State After", defaultOpen: false, children: /* @__PURE__ */ jsxRuntimeExports.jsx(JsonViewer, { data: payload.stateAfter, label: "stateAfter", defaultExpanded: false }) })
+  ] });
 }
 function EventTimeline({ events }) {
   if (events.length === 0) {
@@ -13368,10 +13636,40 @@ function DetailPanel({ selectedId }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx(EventTimeline, { events })
   ] });
 }
+const MIN_PANEL_WIDTH = 180;
+const MAX_PANEL_WIDTH = 600;
+const DEFAULT_PANEL_WIDTH = 320;
+function getInitialTheme() {
+  const saved = localStorage.getItem("proxy-inspector-theme");
+  if (saved === "light" || saved === "dark") return saved;
+  return "dark";
+}
+function getInitialPanelWidth() {
+  const saved = localStorage.getItem("proxy-inspector-panel-width");
+  if (saved) {
+    const n = parseInt(saved, 10);
+    if (!isNaN(n) && n >= MIN_PANEL_WIDTH && n <= MAX_PANEL_WIDTH) return n;
+  }
+  return DEFAULT_PANEL_WIDTH;
+}
 function App() {
-  const { metadata, interactions, aggregates, openFile } = useFileData();
+  const { metadata, interactions, aggregates, openFile, reloadFile } = useFileData();
   const [selectedId, setSelectedId] = reactExports.useState(null);
   const [searchQuery, setSearchQuery] = reactExports.useState("");
+  const [theme, setTheme] = reactExports.useState(getInitialTheme);
+  const [panelWidth, setPanelWidth] = reactExports.useState(getInitialPanelWidth);
+  const [panelCollapsed, setPanelCollapsed] = reactExports.useState(false);
+  const isDragging = reactExports.useRef(false);
+  reactExports.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("proxy-inspector-theme", theme);
+  }, [theme]);
+  reactExports.useEffect(() => {
+    localStorage.setItem("proxy-inspector-panel-width", String(panelWidth));
+  }, [panelWidth]);
+  const toggleTheme = reactExports.useCallback(() => {
+    setTheme((t) => t === "dark" ? "light" : "dark");
+  }, []);
   const filtered = reactExports.useMemo(() => {
     if (!searchQuery.trim()) return interactions;
     const q = searchQuery.toLowerCase();
@@ -13380,7 +13678,31 @@ function App() {
   const handleSelect = reactExports.useCallback((id) => {
     setSelectedId(id);
   }, []);
+  const handleMouseDown = reactExports.useCallback((e) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMouseMove = (ev) => {
+      if (!isDragging.current) return;
+      const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, ev.clientX));
+      setPanelWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, []);
+  const togglePanel = reactExports.useCallback(() => {
+    setPanelCollapsed((c) => !c);
+  }, []);
   const isWatching = metadata !== null;
+  const effectiveWidth = panelCollapsed ? 0 : panelWidth;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-layout", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       Toolbar,
@@ -13390,20 +13712,52 @@ function App() {
         isWatching,
         searchQuery,
         onSearchChange: setSearchQuery,
-        onOpenFile: openFile
+        onOpenFile: openFile,
+        onReloadFile: reloadFile,
+        theme,
+        onToggleTheme: toggleTheme
       }
     ),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "content-area", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        InteractionList,
-        {
-          interactions: filtered,
-          selectedId,
-          onSelect: handleSelect
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(DetailPanel, { selectedId })
-    ] })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: "content-area",
+        style: { gridTemplateColumns: `${effectiveWidth}px auto 1fr` },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              className: "interaction-list-container",
+              style: {
+                width: effectiveWidth,
+                overflow: panelCollapsed ? "hidden" : void 0
+              },
+              children: !panelCollapsed && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                InteractionList,
+                {
+                  interactions: filtered,
+                  selectedId,
+                  onSelect: handleSelect
+                }
+              )
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "resize-handle-area", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "collapse-toggle-btn",
+                onClick: togglePanel,
+                title: panelCollapsed ? "Show sidebar" : "Hide sidebar",
+                children: panelCollapsed ? "▶" : "◀"
+              }
+            ),
+            !panelCollapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "resize-handle", onMouseDown: handleMouseDown })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(DetailPanel, { selectedId })
+        ]
+      }
+    )
   ] });
 }
 const root = clientExports.createRoot(document.getElementById("root"));

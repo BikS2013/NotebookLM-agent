@@ -8,7 +8,7 @@ import type {
   DetailPayload,
   InteractionSummary,
 } from '@shared/types';
-import { createNdjsonParser, type NdjsonParser } from './ndjson-parser';
+import { createNdjsonParser, groupByTurns, type NdjsonParser } from './ndjson-parser';
 import { createInteractionStore, type InteractionStore } from './interaction-store';
 import { createFileTailer, type FileTailer } from './file-tailer';
 import { createFileManager, type FileManager } from './file-manager';
@@ -73,8 +73,14 @@ function openAndParseFile(filePath: string): ParsedFileData {
 
   // Parse all lines
   const parser = createNdjsonParser();
-  const entries = parser.push(content);
+  let entries = parser.push(content);
   entries.push(...parser.flush());
+
+  // For LangGraph format, post-process to group events by turn_summary boundaries
+  if (parser.detectedFormat === 'langgraph') {
+    entries = groupByTurns(entries);
+  }
+
   store.addEntries(entries);
 
   // Start tailer from current file size
@@ -94,6 +100,7 @@ function openAndParseFile(filePath: string): ParsedFileData {
       sessionId: fileInfo.sessionId,
       createdAt: fileInfo.createdAt,
       fileSize: fileInfo.fileSize,
+      logFormat: parser.detectedFormat ?? 'adk-proxy',
     },
     interactions: store.getAllSummaries(),
     aggregates: store.getAggregates(),

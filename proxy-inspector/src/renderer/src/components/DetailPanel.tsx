@@ -17,9 +17,8 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-export function DetailPanel({ selectedId }: DetailPanelProps): JSX.Element {
+export function DetailPanel({ selectedId }: DetailPanelProps) {
   const { detail, isLoading, error } = useDetail(selectedId)
-
   if (!selectedId) {
     return (
       <div className="detail-panel">
