@@ -258,6 +258,71 @@ The agent must:
 
 ---
 
+### FR-PROXY-01: ADK Plugin Implementation
+
+The LLM proxy must be implemented as an ADK `BasePlugin` subclass that intercepts all agent-to-LLM communication via the plugin callback mechanism. The plugin must implement `beforeModelCallback`, `afterModelCallback`, `beforeToolCallback`, `afterToolCallback`, `onModelErrorCallback`, `beforeRunCallback`, and `afterRunCallback`. The plugin must NOT modify any requests or responses (purely observational — all callbacks must return `undefined`).
+
+**Module**: `notebooklm_agent/proxy/llm-proxy-plugin.ts`
+
+---
+
+### FR-PROXY-02: Round Trip Tracking
+
+Each interaction (from user message to final agent response) may involve multiple LLM round trips. The proxy must assign a unique interaction ID to each user message submission, track and number each LLM round trip within an interaction, record timestamps for each round trip, and link tool calls and tool results to the round trip that triggered them.
+
+**Module**: `notebooklm_agent/proxy/llm-proxy-plugin.ts`
+
+---
+
+### FR-PROXY-03: Full Payload Capture
+
+For each LLM round trip, the proxy must capture: the full request payload (model name, system instruction, conversation history, tool declarations, generation config) and the full response payload (content, token usage metadata, finish reason, error information). For tool calls within a round trip, it must capture the tool name, arguments, result, duration, and any errors.
+
+**Module**: `notebooklm_agent/proxy/proxy-serializer.ts`
+
+---
+
+### FR-PROXY-04: Structured Log Storage
+
+Captured data must be written to NDJSON (newline-delimited JSON) log files, one per session. Each log entry must have an event type, timestamp, interaction ID, round trip number, and the payload. The log file location is configurable via `LLM_PROXY_LOG_DIR`. Log files must be processable with standard tools like `jq`. Log file rotation occurs when the configured maximum file size is reached.
+
+**Module**: `notebooklm_agent/proxy/proxy-logger.ts`
+
+---
+
+### FR-PROXY-05: Optional Activation
+
+The proxy must be optional and disabled by default. Activated via `LLM_PROXY_ENABLED=true` environment variable. When disabled, zero overhead: the plugin is not registered with the runner at all. Both the TUI (`useAgent.ts`) and CLI (`cli.ts`) must support proxy activation.
+
+**Module**: `notebooklm_agent/proxy/proxy-config.ts`, `notebooklm_agent/proxy/proxy-factory.ts`
+
+---
+
+### FR-PROXY-06: Console Summary Output
+
+When the proxy is active and `LLM_PROXY_VERBOSE=true`, the proxy prints a concise summary to stderr after each interaction completes: number of LLM round trips, total prompt and completion tokens, tool call names, and interaction duration.
+
+**Module**: `notebooklm_agent/proxy/llm-proxy-plugin.ts` (afterRunCallback)
+
+---
+
+### FR-PROXY-07: Slash Command `/inspect`
+
+A new slash command `/inspect` (alias `/proxy`) is available in both the TUI and CLI. When the proxy is active, it displays a summary of the last interaction's round trips (count, tokens, tool calls, durations). When the proxy is not active, it displays a message indicating the proxy is disabled and how to enable it. The command reads from the proxy's in-memory buffer and does not require the agent to be idle.
+
+**Module**: `notebooklm_agent/proxy/format-inspect.ts`  
+**Integration**: `notebooklm_agent/tui/index.tsx`, `notebooklm_agent/cli.ts`
+
+---
+
+### FR-PROXY-08: In-Memory Buffer
+
+The proxy maintains an in-memory circular buffer of the last N interactions (default: 10, configurable via `LLM_PROXY_BUFFER_SIZE`) for the `/inspect` command. This allows inspection without reading log files.
+
+**Module**: `notebooklm_agent/proxy/proxy-buffer.ts`
+
+---
+
 ### FR-13: Destructive Operation Safeguards
 
 The agent must always confirm with the user before executing destructive operations (delete notebook, delete source, delete artifact, delete note). Safeguards are dual-layered:
@@ -541,3 +606,109 @@ Agent responses appear token-by-token as they stream from the LLM via `Streaming
 | C-TUI-05 | Runnable via `npx tsx` and `npm run tui` |
 | C-TUI-06 | macOS is primary platform |
 | C-TUI-07 | Agent code (`agent.ts`, `tools/*`) must not be modified |
+
+---
+
+## Proxy Inspector (Electron NDJSON Log Viewer)
+
+### FR-PI-01: File Selection and Opening
+
+The Proxy Inspector must provide a native file-open dialog to select `.ndjson` log files. It must support drag-and-drop of `.ndjson` files onto the window. The file path, session ID (extracted from filename), and creation date must be displayed in a header bar. A list of the last 10 recently opened files must be maintained for quick re-opening.
+
+**Implementation**: Electron `dialog.showOpenDialog()`, `BrowserWindow` drop handler, `recent-files.ts`
+
+---
+
+### FR-PI-02: File Watching (Live Tail)
+
+After opening a file, the inspector must watch it for appended content using `fs.watch` with byte-offset incremental reads. Newly appended NDJSON lines must be parsed incrementally (not re-reading the entire file). Auto-scroll to the latest interaction when new events arrive, unless the user has scrolled up. A visual indicator (badge or pulse) must appear when new events arrive while the user is scrolled away. A toggle must be available to pause/resume live watching. The watcher must be event-type agnostic (macOS always fires 'rename') and debounced at 500ms.
+
+**Implementation**: `file-watcher.ts`, `ndjson-tail-parser.ts`, IPC push via `webContents.send()`
+
+---
+
+### FR-PI-03: Interaction List (Master View)
+
+All NDJSON lines must be parsed and grouped by `interactionId` into interaction cards. Each card displays: sequential number (1-based), user message (first 100 characters), timestamp (local time), total duration, round trip count, total tokens, tool call names as badges, and a status indicator (green check for complete, yellow spinner for in-progress, red X for errors). Clicking a card selects it and shows its detail. Interactions with errors must have distinct error styling. The list must use virtual scrolling (react-window v2) for files with 100+ interactions.
+
+**Implementation**: `InteractionList.tsx`, `InteractionCard.tsx`, react-window v2 `List` component
+
+---
+
+### FR-PI-04: Interaction Detail (Event Timeline)
+
+The detail panel must show a timeline/sequence of all events within the selected interaction, ordered by timestamp. Each event shows: event type as a color-coded label, timestamp relative to interaction start, round trip number badge, and duration where applicable. Clicking an event expands its payload detail. Full payload data is fetched on-demand from the main process via IPC (lazy loading).
+
+**Implementation**: `EventTimeline.tsx`, `EventTimelineItem.tsx`, `usePayload.ts` hook
+
+---
+
+### FR-PI-05: Payload Rendering
+
+Each of the 8 event types must have a dedicated payload renderer:
+- **interaction_start**: User message in chat-bubble style, session ID.
+- **llm_request**: Model name (prominent), collapsible contents/conversation history, collapsible system instruction (monospaced), tool names as chips, collapsible tool declarations (JSON tree, RT1 only).
+- **llm_response**: Response text (handles both structured `{role, parts}` formats), function calls with args JSON, token usage badges (prompt/completion/total), duration, streamed flag, chunk count, finish reason.
+- **tool_start**: Tool name (prominent), function call ID, args as formatted JSON.
+- **tool_result**: Tool name, duration, result keys list.
+- **tool_error**: Tool name, error message with red styling.
+- **llm_error**: Error code, error message with red styling.
+- **interaction_end**: Summary: round trip count, token totals, total duration, tool calls used.
+All JSON payloads must be viewable as formatted/pretty-printed JSON via a "Raw JSON" toggle.
+
+**Implementation**: 8 payload components in `components/payloads/`, `CollapsibleSection.tsx`, `JsonView.tsx`, `RawJsonToggle.tsx`
+
+---
+
+### FR-PI-06: Token Usage Aggregates
+
+A summary bar must show aggregate stats for the entire file: total interactions count, total tokens (prompt + completion), total tool calls, and time span (first to last event timestamp). Per-interaction token breakdown must be visible in the interaction list cards.
+
+**Implementation**: `StatusBar.tsx`, `ParsedFileData.aggregates`
+
+---
+
+### FR-PI-07: Search and Filter
+
+Text search across user messages to quickly find specific interactions. Filter interactions by: has tool calls, has errors, minimum token count. Filter events within an interaction by event type (show/hide specific event types in the timeline).
+
+**Implementation**: `SearchFilter.tsx`, `useFilter.ts` hook
+
+---
+
+### FR-PI-08: UI Layout and Theming
+
+Two-panel master-detail layout: interaction list on the left (~300px), event detail on the right (wider). Resizable panel divider. Header bar showing file info and aggregate stats. Dark theme by default (developer tool aesthetic) with readable contrast. Monospaced font for all JSON/code content; proportional font for labels and UI text.
+
+**Implementation**: CSS grid layout, CSS custom properties for dark theme, `SplitPane.tsx`
+
+---
+
+### Proxy Inspector Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| NFR-PI-01 | Handle log files up to 100 MB without UI freeze (incremental parsing) |
+| NFR-PI-02 | Virtual scrolling for 100+ interactions (react-window v2) |
+| NFR-PI-03 | Large JSON payloads (30KB+) lazy-rendered on user click only |
+| NFR-PI-04 | File watching debounced to max once per 500ms |
+| NFR-PI-05 | Standalone: no dependency on the agent being running |
+| NFR-PI-06 | Opening a file requires at most 2 clicks |
+| NFR-PI-07 | Keyboard navigation: arrow keys for list, Enter to expand, Escape to collapse |
+| NFR-PI-08 | App starts and renders in under 3 seconds |
+| NFR-PI-09 | Own directory (`proxy-inspector/`) with own `package.json` and `node_modules` |
+| NFR-PI-10 | May import types from `proxy-types.ts` at compile time; no agent runtime dependency |
+
+---
+
+### Proxy Inspector Constraints
+
+| Constraint | Description |
+|------------|-------------|
+| C-PI-01 | Electron (latest stable) for the desktop shell |
+| C-PI-02 | TypeScript for all code |
+| C-PI-03 | React for the renderer (consistency with TUI) |
+| C-PI-04 | electron-vite for build tooling |
+| C-PI-05 | macOS primary target |
+| C-PI-06 | Read-only viewer: no editing or modifying log files |
+| C-PI-07 | Single-window, single-file-at-a-time viewer |

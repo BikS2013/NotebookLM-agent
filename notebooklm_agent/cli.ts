@@ -27,6 +27,11 @@ import {
   formatLastExchange,
 } from './tui/lib/format-commands.ts';
 import type { Message } from './tui/types.ts';
+import {
+  createProxyPlugin,
+  formatInspect,
+  formatInspectDisabled,
+} from './proxy/index.ts';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -64,8 +69,13 @@ async function main(): Promise<void> {
   const userId = 'cli-user';
   const appName = 'notebooklm-cli';
 
-  // Initialize runner and session
-  const runner = new InMemoryRunner({ agent: rootAgent, appName });
+  // Initialize proxy plugin (optional) and runner
+  const proxyPlugin = createProxyPlugin();
+  const runner = new InMemoryRunner({
+    agent: rootAgent,
+    appName,
+    ...(proxyPlugin ? { plugins: [proxyPlugin] } : {}),
+  });
   let session = await runner.sessionService.createSession({ appName, userId });
   let sessionId = session.id;
 
@@ -74,7 +84,7 @@ async function main(): Promise<void> {
 
   console.log(`${BOLD}NotebookLM Agent CLI${RESET}`);
   console.log(`${DIM}Session: ${sessionId.slice(0, 8)}${RESET}`);
-  console.log(`${DIM}Commands: /history /memory /new /last /quit${RESET}`);
+  console.log(`${DIM}Commands: /history /memory /new /last /inspect /quit${RESET}`);
   console.log();
 
   const rl = readline.createInterface({
@@ -164,6 +174,17 @@ async function main(): Promise<void> {
       return;
     }
 
+    // --- /inspect, /proxy ---
+    if (command === '/inspect' || command === '/proxy') {
+      const output = proxyPlugin
+        ? formatInspect(proxyPlugin)
+        : formatInspectDisabled();
+      printSystem(output);
+      console.log();
+      rl.prompt();
+      return;
+    }
+
     // --- /help ---
     if (command === '/help') {
       printSystem('Available commands:');
@@ -171,6 +192,7 @@ async function main(): Promise<void> {
       printSystem('  /memory, /state  Show agent session state (memory)');
       printSystem('  /new, /reset     Clear memory and start new session');
       printSystem('  /last, /raw      Show last request/response with model');
+      printSystem('  /inspect, /proxy Show LLM proxy interaction details');
       printSystem('  /quit, /exit     Exit the CLI');
       printSystem('  /help            Show this help');
       console.log();

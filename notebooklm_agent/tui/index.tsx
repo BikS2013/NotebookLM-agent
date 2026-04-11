@@ -29,6 +29,7 @@ import {
   formatSessionState,
   formatLastExchange,
 } from './lib/format-commands.ts';
+import { formatInspect, formatInspectDisabled } from '../proxy/index.ts';
 
 export default function App() {
   const { exit } = useApp();
@@ -153,6 +154,16 @@ export default function App() {
             }
           })();
         }
+        editor.clear();
+        return;
+      }
+
+      if (command === '/inspect' || command === '/proxy') {
+        history.addEntry(text);
+        const output = agent.proxyPlugin
+          ? formatInspect(agent.proxyPlugin)
+          : formatInspectDisabled();
+        agent.addSystemMessage(output);
         editor.clear();
         return;
       }

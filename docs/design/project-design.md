@@ -3776,3 +3776,240 @@ A third branch is added: `[system]` label in yellow/dim, body text with `dimColo
 | Yellow/dim styling for system messages | Visually distinct from green (user) and cyan (agent). |
 | Case-insensitive commands via `toLowerCase()` | Existing pattern, no additional code needed. |
 | Input history recorded for all slash commands | Enables up-arrow recall of commands. |
+
+---
+
+## 10. LLM Proxy Plugin
+
+**Version**: 1.0 — Added 2026-04-11  
+**References**: plan-006-llm-proxy.md, technical-design-llm-proxy.md, investigation-llm-proxy.md
+
+### 10.1 Overview
+
+An optional ADK `BasePlugin` subclass that intercepts all agent-to-LLM traffic, writes structured NDJSON logs, maintains an in-memory circular buffer for the `/inspect` slash command, and optionally prints per-interaction summaries to stderr. The plugin is purely observational — all callbacks return `undefined` — and adds zero overhead when disabled.
+
+### 10.2 Module Architecture
+
+All proxy code lives under `notebooklm_agent/proxy/`:
+
+```
+notebooklm_agent/
+  proxy/
+    index.ts                  # Barrel export (public API)
+    proxy-types.ts            # All TypeScript types and interfaces
+    proxy-serializer.ts       # Safe JSON serialization, request/response extractors
+    proxy-buffer.ts           # In-memory circular buffer (InteractionRecord[])
+    proxy-logger.ts           # Async NDJSON file writer with rotation
+    proxy-config.ts           # Env var loading and validation
+    llm-proxy-plugin.ts       # BasePlugin subclass (core orchestration)
+    format-inspect.ts         # /inspect output formatter
+    proxy-factory.ts          # Conditional plugin construction
+```
+
+Internal dependency chain:
+
+```
+proxy-types.ts              ← foundation (no dependencies)
+    ↑
+proxy-serializer.ts         ← depends on proxy-types
+proxy-buffer.ts             ← depends on proxy-types
+proxy-logger.ts             ← depends on proxy-types
+proxy-config.ts             ← depends on proxy-types (ProxyConfig type)
+    ↑
+llm-proxy-plugin.ts         ← depends on all above
+    ↑
+format-inspect.ts           ← depends on proxy-types, llm-proxy-plugin (type)
+proxy-factory.ts            ← depends on proxy-config, llm-proxy-plugin
+    ↑
+index.ts                    ← barrel re-export
+```
+
+No new npm dependencies. Uses only `node:fs/promises`, `node:path`, `node:crypto` (Node.js built-ins) and `@google/adk` (existing dependency for `BasePlugin`).
+
+### 10.3 Key Type Definitions
+
+| Type | Purpose |
+|------|---------|
+| `ProxyEventType` | Discriminated union of NDJSON event types: `interaction_start`, `llm_request`, `llm_response`, `tool_start`, `tool_result`, `tool_error`, `llm_error`, `interaction_end` |
+| `ToolCallRecord` | Single tool invocation: name, functionCallId, args, result, error, timing |
+| `RoundTripRecord` | One LLM request/response cycle: request fields, accumulated response, tool calls, timing, token usage |
+| `InteractionRecord` | Complete user message → agent response: interaction ID, session ID, round trips, total tokens, timing |
+| `LogEntry` | NDJSON envelope: event type, ISO timestamp, interaction ID, round trip number, payload |
+| `ProxyConfig` | Validated configuration: logDir, verbose, bufferSize, maxFileSize |
+
+### 10.4 Configuration
+
+| Variable | Purpose | Required | Default |
+|----------|---------|:--------:|---------|
+| `LLM_PROXY_ENABLED` | Enable/disable the proxy | No | `false` |
+| `LLM_PROXY_LOG_DIR` | NDJSON log file directory | When enabled | No fallback (throws) |
+| `LLM_PROXY_VERBOSE` | Print summaries to stderr | No | `false` |
+| `LLM_PROXY_BUFFER_SIZE` | In-memory interaction buffer size | No | `10` |
+| `LLM_PROXY_MAX_FILE_SIZE` | Max log file bytes before rotation | No | `52428800` (50MB) |
+
+**Configuration exception**: `LLM_PROXY_ENABLED`, `LLM_PROXY_VERBOSE`, `LLM_PROXY_BUFFER_SIZE`, and `LLM_PROXY_MAX_FILE_SIZE` use default values because the proxy is an optional developer tool. `LLM_PROXY_LOG_DIR` follows the strict no-fallback policy. This exception is recorded in `Issues - Pending Items.md`.
+
+### 10.5 Plugin Callbacks
+
+The `LlmProxyPlugin` extends `BasePlugin` and implements these callbacks:
+
+| Callback | Action | Returns |
+|----------|--------|---------|
+| `onUserMessageCallback` | Capture user message text (truncated to 500 chars) | `undefined` |
+| `beforeRunCallback` | Create `InteractionRecord`, log `interaction_start` | `undefined` |
+| `beforeModelCallback` | Create `RoundTripRecord`, serialize `LlmRequest`, log `llm_request` | `undefined` |
+| `afterModelCallback` | Accumulate streaming partials; on final chunk, finalize round trip, log `llm_response` | `undefined` |
+| `beforeToolCallback` | Create `ToolCallRecord`, log `tool_start` | `undefined` |
+| `afterToolCallback` | Record result/duration, log `tool_result` | `undefined` |
+| `onModelErrorCallback` | Log `llm_error`, finalize round trip with error | `undefined` |
+| `onToolErrorCallback` | Log `tool_error`, record error on tool call | `undefined` |
+| `afterRunCallback` | Finalize interaction, sum tokens, push to buffer, flush logger, optional stderr summary | `void` |
+
+### 10.6 Streaming Accumulation
+
+When using `StreamingMode.SSE`, `afterModelCallback` fires once per streamed chunk. The plugin accumulates partial text until a final chunk is detected:
+
+- **Partial**: `llmResponse.partial === true` AND `turnComplete !== true` — accumulate text, increment chunk count
+- **Final**: `partial === false/undefined` OR `turnComplete === true` — finalize round trip with usage metadata
+
+Safety nets: `beforeModelCallback` implicitly closes an unclosed previous round trip. `afterRunCallback` finalizes any unclosed round trips.
+
+### 10.7 Data Flow
+
+```
+User Message
+  → onUserMessageCallback (capture text)
+  → beforeRunCallback (create interaction)
+  → [per round trip]:
+      → beforeModelCallback (serialize request, create round trip)
+      → afterModelCallback ×N (accumulate streaming, finalize on last)
+      → [per tool call]:
+          → beforeToolCallback (record start)
+          → afterToolCallback (record result)
+  → afterRunCallback (finalize interaction, flush, buffer, optional stderr)
+```
+
+### 10.8 Integration Points
+
+The proxy is injected at runner creation in two places:
+
+**TUI** (`tui/hooks/useAgent.ts`):
+```typescript
+const proxyPlugin = createProxyPlugin();
+const runner = new InMemoryRunner({
+  agent: rootAgent,
+  appName: 'notebooklm-tui',
+  plugins: proxyPlugin ? [proxyPlugin] : undefined,
+});
+```
+
+**CLI** (`cli.ts`): Same pattern.
+
+The `/inspect` (alias `/proxy`) slash command is added to both TUI (`tui/index.tsx`) and CLI (`cli.ts`), reading from the plugin's in-memory buffer via `plugin.getLastInteraction()`.
+
+### 10.9 Error Handling
+
+The proxy must never crash the agent. Every plugin callback is wrapped in a top-level try/catch that writes errors to `process.stderr` with `[llm-proxy]` prefix and returns `undefined`. The logger silently drops failed writes. The serializer returns error marker strings on failure.
+
+### 10.10 Serialization Strategy
+
+Key non-serializable fields in ADK objects:
+
+| Field | Solution |
+|-------|----------|
+| `LlmRequest.toolsDict` (BaseTool instances) | Extract `Object.keys()` for names only |
+| `LlmRequest.config.abortSignal` | Skip |
+| `LlmRequest.config.httpOptions` | Skip |
+| Functions anywhere | Replace with `"[Function]"` |
+| Circular references | Replace with `"[Circular]"` |
+| Large payloads (>50KB) | Truncate with `"[truncated]"` marker |
+
+Full tool declarations are serialized only on the first round trip of each interaction; subsequent round trips include tool names only.
+
+### 10.11 NDJSON Log Format
+
+One JSON object per line. Each line is a `LogEntry` with: event type, ISO-8601 timestamp, interaction ID, optional round trip number, and event-specific payload.
+
+Log file naming: `proxy-<sessionId>-<timestamp>.ndjson`  
+Rotation: new file opened when current exceeds `maxFileSize`.
+
+### 10.12 Implementation Units
+
+| Unit | Files | Depends On | Parallel With |
+|------|-------|-----------|---------------|
+| A: Types + Serializer | proxy-types.ts, proxy-serializer.ts | — | — |
+| B: Buffer + Logger | proxy-buffer.ts, proxy-logger.ts | A | C |
+| C: Config | proxy-config.ts | A | B |
+| D: Plugin + Factory | llm-proxy-plugin.ts, proxy-factory.ts, index.ts | A, B, C | — |
+| E: Formatter + Integration | format-inspect.ts, useAgent.ts, cli.ts, tui/index.tsx | D | — |
+
+### 10.13 Test Files
+
+| Test File | Module | Est. Tests |
+|-----------|--------|-----------|
+| `test-proxy-serializer.test.ts` | Serializer | ~18 |
+| `test-proxy-buffer.test.ts` | Buffer | ~8 |
+| `test-proxy-logger.test.ts` | Logger | ~8 |
+| `test-proxy-config.test.ts` | Config | ~10 |
+| `test-llm-proxy-plugin.test.ts` | Plugin | ~20 |
+| `test-format-inspect.test.ts` | Formatter | ~6 |
+| **Total** | | **~70** |
+
+---
+
+## Proxy Inspector (Electron)
+
+### Overview
+
+The Proxy Inspector is a standalone Electron desktop application that lives in `proxy-inspector/` with its own `package.json` and independent dependency tree. It opens NDJSON log files generated by the NotebookLM Agent proxy, displays interactions grouped by `interactionId` in a master-detail layout, drills into request/response payloads with collapsible sections, and live-tails the file as new entries are appended.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Electron Main Process                 │
+│  file-manager.ts       Open dialog, recent files        │
+│  ndjson-parser.ts      Line parser, remainder buffer    │
+│  file-tailer.ts        fs.watch + byte-offset reads     │
+│  interaction-store.ts  Group by interactionId, summaries│
+│  ipc-handlers.ts       All ipcMain.handle + push events │
+├─────────────────────────────────────────────────────────┤
+│  Preload: contextBridge → ProxyInspectorAPI             │
+├─────────────────────────────────────────────────────────┤
+│  Renderer (React 19 + react-window v2)                  │
+│  ┌──────────┬──────────────────────────────────────────┐│
+│  │ Inter-   │ Event Timeline + Payload Renderers       ││
+│  │ action   │ (8 event types, each with dedicated      ││
+│  │ List     │  component + Raw JSON toggle)            ││
+│  │ (virtual │                                          ││
+│  │ scroll)  │ CollapsibleSection, JsonViewer,           ││
+│  │          │ TokenSummary                              ││
+│  └──────────┴──────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────┘
+```
+
+### Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Framework | React 19 + electron-vite | UI complexity (8 payload renderers, virtual scroll, live tail) warrants components |
+| Virtual scrolling | react-window v2.2.7 | Single `List` component with `rowHeight` function, `useListRef`, `scrollToRow` |
+| File watching | `fs.watch` + byte-offset | Zero deps; macOS kqueue fires 'rename' not 'change' -- handler is event-type agnostic |
+| IPC strategy | Summaries upfront, payloads on demand | Keeps renderer memory bounded; full payloads fetched via `getInteractionDetail(id)` |
+| Type safety | Shared `ProxyInspectorAPI` interface | Compile-time contract between preload and renderer via `Window.api` augmentation |
+| Theme | CSS custom properties (Catppuccin Mocha) | Dark developer-tool aesthetic, WCAG AA contrast |
+
+### Data Flow Summary
+
+1. **File open**: Renderer invokes `api.openFile()` -> Main opens dialog -> reads + parses full file -> sends `ParsedFileData` (summaries only) back
+2. **Live tail**: Main watches file via `fs.watch` -> reads new bytes from byte offset -> parses -> groups -> pushes `IncrementalUpdate` to renderer
+3. **Detail view**: Renderer invokes `api.getInteractionDetail(id)` -> Main returns full `EventEntry[]` from in-memory store
+4. **Search/filter**: Applied client-side in renderer from summaries already in state
+
+### Relationship to Agent
+
+The proxy inspector is read-only and independent of the agent runtime. It imports `LogEntry` and `ProxyEventType` from `notebooklm_agent/proxy/proxy-types.ts` at compile time only (via TypeScript path alias `@proxy-types`). No runtime dependency on the agent.
+
+### Detailed Design
+
+See `docs/design/technical-design-proxy-inspector.md` for the complete technical design covering directory structure, module APIs, shared types, IPC contracts, component tree, data flow diagrams, and implementation units.

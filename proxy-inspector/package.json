@@ -1,0 +1,24 @@
+{
+  "name": "proxy-inspector",
+  "version": "0.1.0",
+  "description": "Electron NDJSON log viewer for NotebookLM proxy logs",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^41.2.0",
+    "electron-vite": "^4.0.1",
+    "typescript": "^6.0.2",
+    "vite": "^6.4.2"
+  }
+}

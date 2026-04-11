@@ -339,3 +339,193 @@ An AI agent built on Google ADK (Agent Development Kit) that manages Google Note
             - Node.js (LTS)
     </info>
 </CLI>
+
+<LlmProxy>
+    <objective>
+        Optional ADK plugin that intercepts all LLM request/response traffic between
+        the agent and the model, capturing full payloads, tool calls, streaming chunks,
+        and token usage for developer inspection and debugging.
+    </objective>
+    <command>
+        # Enable the proxy via environment variables:
+        LLM_PROXY_ENABLED=true LLM_PROXY_LOG_DIR=./logs npm run tui
+        LLM_PROXY_ENABLED=true LLM_PROXY_LOG_DIR=./logs npm run cli
+
+        # Use /inspect in the TUI or CLI to view captured interactions:
+        /inspect
+    </command>
+    <info>
+        The LLM Proxy Plugin is an optional component that acts as an observer between
+        the ADK agent and the LLM. When enabled, it captures every request sent to the
+        model and every response received, including streaming chunks, tool calls, and
+        errors — without modifying any agent behavior.
+
+        Architecture:
+            notebooklm_agent/proxy/
+                proxy-types.ts          All TypeScript types and interfaces
+                proxy-serializer.ts     Safe JSON serialization for ADK objects
+                proxy-buffer.ts         In-memory circular buffer for interactions
+                proxy-logger.ts         Async NDJSON file writer with rotation
+                proxy-config.ts         Environment variable configuration
+                llm-proxy-plugin.ts     BasePlugin subclass (9 callback overrides)
+                format-inspect.ts       /inspect command output formatter
+                proxy-factory.ts        Conditional plugin creation
+                index.ts                Barrel exports
+
+        Environment variables:
+            LLM_PROXY_ENABLED       "true" to enable (default: disabled)
+            LLM_PROXY_LOG_DIR       Directory for NDJSON log files (required when enabled)
+            LLM_PROXY_VERBOSE       "true" for stderr summaries (default: false)
+            LLM_PROXY_BUFFER_SIZE   In-memory buffer capacity (default: 10)
+            LLM_PROXY_MAX_FILE_SIZE Max log file bytes before rotation (default: 50MB)
+
+        Note: LLM_PROXY_VERBOSE, LLM_PROXY_BUFFER_SIZE, and LLM_PROXY_MAX_FILE_SIZE
+        have default values as documented exceptions to the no-fallback configuration rule.
+
+        What is captured per interaction:
+            - Interaction ID, session ID, timestamps, duration
+            - User message text (first 500 chars)
+            - For each LLM round trip:
+                - Model name, system instruction, conversation history
+                - Tool names and declarations (full on first round trip)
+                - Generation config (temperature, topP, etc.)
+                - Response content, token usage, finish reason
+                - Streaming chunk count
+                - Errors (if any)
+            - For each tool call:
+                - Tool name, arguments, result, duration
+                - Error details (if failed)
+            - Total token counts across all round trips
+
+        Slash commands:
+            /inspect        View last captured interaction (both TUI and CLI)
+            /proxy          Alias for /inspect
+
+        NDJSON log format:
+            Each line is a JSON object with: event, timestamp, interactionId,
+            roundTrip (optional), and payload. Event types: interaction_start,
+            llm_request, llm_response, tool_start, tool_result, tool_error,
+            llm_error, interaction_end.
+
+        Safety guarantees:
+            - All plugin callbacks return undefined (observe-only, never modifies behavior)
+            - All callbacks wrapped in try/catch (never crashes the agent)
+            - Zero overhead when disabled (plugin not created, not passed to runner)
+            - Logger errors written to stderr with [llm-proxy] prefix
+
+        Tests:
+            test_scripts/test-proxy-serializer.test.ts (25 tests)
+            test_scripts/test-proxy-buffer.test.ts (10 tests)
+            test_scripts/test-proxy-config.test.ts (9 tests)
+            test_scripts/test-llm-proxy-plugin.test.ts (22 tests)
+            test_scripts/test-proxy-logger.test.ts (8 tests)
+            test_scripts/test-format-inspect.test.ts (6 tests)
+            Total: 80 tests
+
+        Examples:
+            # Basic usage with TUI
+            LLM_PROXY_ENABLED=true LLM_PROXY_LOG_DIR=./logs npm run tui
+            # Chat with the agent, then type /inspect to see captured data
+
+            # Verbose mode (prints summaries to stderr)
+            LLM_PROXY_ENABLED=true LLM_PROXY_LOG_DIR=./logs LLM_PROXY_VERBOSE=true npm run cli
+
+            # Custom buffer and file size
+            LLM_PROXY_ENABLED=true LLM_PROXY_LOG_DIR=./logs \
+              LLM_PROXY_BUFFER_SIZE=100 LLM_PROXY_MAX_FILE_SIZE=52428800 npm run tui
+    </info>
+</LlmProxy>
+
+<ProxyInspector>
+    <objective>
+        Standalone Electron app for inspecting and monitoring NDJSON log files
+        generated by the LLM Proxy Plugin. Provides a visual interface with
+        interaction timeline, payload rendering, token dashboards, and live
+        file tailing.
+    </objective>
+    <command>
+        # Development mode (hot reload):
+        cd proxy-inspector && npm run dev
+
+        # Build and preview:
+        cd proxy-inspector && npm run build && npm run preview
+
+        # Or launch directly after build:
+        cd proxy-inspector && npx electron out/main/index.js
+    </command>
+    <info>
+        The Proxy Inspector is an independent Electron application under proxy-inspector/
+        that visualizes the NDJSON log files produced by the LLM Proxy Plugin.
+
+        Architecture:
+            proxy-inspector/
+                src/
+                    main/                    Electron main process
+                        index.ts             BrowserWindow, menu, window state
+                        ndjson-parser.ts     NDJSON line parser with remainder buffer
+                        interaction-store.ts Event grouping by interactionId
+                        file-tailer.ts       fs.watch byte-offset tailing (500ms debounce)
+                        file-manager.ts      File dialog, recent files
+                        ipc-handlers.ts      IPC channel handlers
+                    preload/
+                        index.ts             contextBridge typed API
+                    shared/
+                        types.ts             Shared TypeScript interfaces
+                        ipc-types.ts         ProxyInspectorAPI interface
+                        ipc-channels.ts      IPC channel name constants
+                    renderer/
+                        src/
+                            App.tsx          Root component
+                            components/      React components (12 files)
+                            hooks/           Custom hooks (useFileData, useDetail)
+                            styles/          Dark theme CSS (Catppuccin Mocha)
+
+        Features:
+            - Open NDJSON log files via file dialog
+            - Live file tailing (watches for new data appended by the proxy)
+            - Interaction list with timestamps, user messages, badge indicators
+            - Detail panel with vertical event timeline
+            - Type-specific payload rendering for all 8 event types
+            - Collapsible JSON viewer with syntax highlighting
+            - Token usage display (prompt/completion/total)
+            - Tool call tracking with arguments and results
+            - Search interactions by user message text
+            - Dark theme (Catppuccin Mocha palette)
+            - Window state persistence
+            - Recent files list
+
+        Event types rendered:
+            interaction_start   Session ID, user message
+            llm_request         Model, system instruction, contents, tools, config
+            llm_response        Response text, tokens, finish reason, streaming info
+            tool_start          Tool name, arguments
+            tool_result         Result summary, duration
+            tool_error          Error message (red highlight)
+            llm_error           Error details (red highlight)
+            interaction_end     Duration, total tokens, tool calls summary
+
+        Technology:
+            - Electron 41 with context isolation and sandbox
+            - React 19 renderer
+            - electron-vite 4 build system
+            - TypeScript throughout
+            - No external UI framework (custom CSS)
+
+        Prerequisites:
+            - Node.js (LTS)
+            - npm install in proxy-inspector/ directory
+
+        Tests (in parent project test_scripts/):
+            test-ndjson-parser.test.ts (21 tests)
+            test-interaction-store.test.ts (18 tests)
+            test-file-tailer.test.ts (8 tests)
+            Total: 47 tests
+
+        Examples:
+            # Start in dev mode
+            cd proxy-inspector && npm run dev
+
+            # Open a specific log file (macOS)
+            open -a proxy-inspector/out/proxy-inspector.app logs/*.ndjson
+    </info>
+</ProxyInspector>

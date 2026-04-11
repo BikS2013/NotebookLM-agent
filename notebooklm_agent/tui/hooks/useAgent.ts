@@ -16,6 +16,7 @@ import {
 } from '@google/adk';
 import { createUserContent } from '@google/genai';
 import { rootAgent } from '../../agent.ts';
+import { createProxyPlugin, type LlmProxyPlugin } from '../../proxy/index.ts';
 
 // ---------------------------------------------------------------------------
 // Public types — re-exported from shared types module
@@ -49,6 +50,9 @@ export interface UseAgentResult {
 
   /** Insert a system message into the chat history (TUI-local, never sent to agent). */
   addSystemMessage: (text: string) => void;
+
+  /** LLM proxy plugin instance, or undefined if proxy is disabled. */
+  proxyPlugin: LlmProxyPlugin | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +80,7 @@ export function useAgent(userId?: string): UseAgentResult {
   const runnerRef = useRef<InMemoryRunner | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const generatorRef = useRef<AsyncGenerator<Event, void, undefined> | null>(null);
+  const proxyPluginRef = useRef<LlmProxyPlugin | undefined>(undefined);
 
   // -----------------------------------------------------------------------
   // Initialization: create runner + session on mount
@@ -85,9 +90,13 @@ export function useAgent(userId?: string): UseAgentResult {
 
     async function init() {
       try {
+        const proxyPlugin = createProxyPlugin();
+        proxyPluginRef.current = proxyPlugin;
+
         const runner = new InMemoryRunner({
           agent: rootAgent,
           appName: 'notebooklm-tui',
+          ...(proxyPlugin ? { plugins: [proxyPlugin] } : {}),
         });
         runnerRef.current = runner;
 
@@ -420,5 +429,6 @@ export function useAgent(userId?: string): UseAgentResult {
     getSessionEvents,
     resetSession,
     addSystemMessage,
+    proxyPlugin: proxyPluginRef.current,
   };
 }

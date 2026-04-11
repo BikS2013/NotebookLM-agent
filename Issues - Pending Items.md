@@ -22,6 +22,28 @@
 
 3. **`adk web` hardcodes `user_id` to "user"** -- All browser tabs share the same user identity. Session-scoped state (no prefix) isolates state per tab, so this is acceptable for development.
 
+### Configuration Exceptions
+
+12. **LLM Proxy config defaults exception** -- `LLM_PROXY_ENABLED` (default: disabled), `LLM_PROXY_VERBOSE` (default: `false`), `LLM_PROXY_BUFFER_SIZE` (default: `10`), and `LLM_PROXY_MAX_FILE_SIZE` (default: `52428800` / 50MB) use default values because the proxy is an optional developer tool, not a core agent configuration. `LLM_PROXY_LOG_DIR` follows the strict no-fallback policy: when the proxy is enabled, the log directory must be explicitly provided.
+
+### LLM Proxy Notes
+
+13. **LLM Proxy log files may contain sensitive data** -- Tool results logged by the proxy may include user content, notebook data, or YouTube transcripts. No redaction is performed in v1. The developer using the proxy is responsible for securing log files. See refined-request-llm-proxy.md Section 9 item 4.
+
+### Proxy Inspector
+
+14. **`onFileData` push channel is dead code** -- The `IPC.FILE_DATA` channel is defined in `ipc-channels.ts` and the preload bridge subscribes to it, but the main process never calls `mainWindow.webContents.send(IPC.FILE_DATA, ...)`. The `openFile` IPC handler returns data directly via `invoke/handle`, so the push channel is never used. The `useFileData` hook's `onFileData` subscription will never fire. This is not a bug (the app works correctly), but the dead code should be removed or the data flow refactored to use the push channel as the design originally intended.
+
+15. **No virtual scrolling for InteractionList** -- NFR-1.2 requires virtual scrolling (react-window) when there are more than 100 interactions. The current implementation uses a plain `div` with `overflow-y: auto` and renders all cards. For files with hundreds of interactions, this may cause performance issues. The technical design specifies `react-window v2.2.7` but the implementation does not use it (react-window is not even in `package.json`).
+
+16. **Missing Raw JSON toggle on event payloads** -- FR-5.9 and AC-7 require a "Raw JSON" toggle on any event to show the full pretty-printed JSON payload. The current `EventCard` component expands to show structured views of each event type, but there is no toggle to switch between structured view and raw JSON view. The `JsonViewer` component exists and is used within some payload views (e.g., tool declarations), but there is no per-event Raw JSON toggle.
+
+17. **Missing `SplitPane` component (resizable panel divider)** -- FR-8.2 specifies a resizable panel divider between the interaction list and detail panel. The current layout uses a fixed CSS grid (`grid-template-columns: 320px 1fr`). The `SplitPane` component from the design is not implemented. Users cannot resize the panels.
+
+18. **Missing drag-and-drop support in renderer** -- FR-1.3 specifies drag-and-drop of `.ndjson` files onto the window. The main process sends `proxy-inspector:drag-drop` events, but the renderer does not listen for or handle this channel. The preload bridge does not expose a `onDragDrop` subscription.
+
+19. **Missing recent files UI** -- FR-1.4 requires a list of recently opened files for quick re-opening. The `getRecentFiles` and `openRecent` IPC handlers exist in the main process and preload, but the `Toolbar` component has no recent files dropdown or button.
+
 ### Low Priority
 
 4. **Studio creation commands lack `--json` output** -- Studio create commands (audio, video, report, etc.) return Rich-formatted text, not JSON. The tools return the raw text as a message. Use `studio_status` to get structured artifact information after creation.
@@ -77,6 +99,28 @@
 19. **FIXED: `@types/react` misplaced in dependencies** -- `@types/react` was listed under `dependencies` instead of `devDependencies` in `package.json`. Moved to `devDependencies` per the design document (Appendix A).
 
 20. **FIXED: Unused variable `curLine` in `useTextEditor.ts`** -- The `killToEnd` case destructured `{ line: curLine }` from `getCursorPosition()` but never used `curLine`. Removed the unnecessary destructuring.
+
+### LLM Proxy Code Review (2026-04-11)
+
+21. **FIXED: `proxy-config.ts` default values diverged from spec** -- `DEFAULT_BUFFER_SIZE` was `50` (spec: `10`) and `DEFAULT_MAX_FILE_SIZE` was `10MB` (spec: `50MB`). Corrected to match the refined request and plan.
+
+22. **FIXED: `proxy-config.ts` function name diverged from design** -- Function was named `loadProxyConfig()` but the technical design specifies `getProxyConfig()`. Renamed to match the design. Updated `proxy-factory.ts` import accordingly.
+
+23. **FIXED: `proxy-config.ts` accepted `'1'` in addition to `'true'`** -- The refined request specifies only `'true'` as the activation value for `LLM_PROXY_ENABLED`. Removed the `'1'` check.
+
+24. **FIXED: `proxy-config.ts` stale inline comments** -- Comments for `LLM_PROXY_BUFFER_SIZE` and `LLM_PROXY_MAX_FILE_SIZE` referenced old default values. Updated to match corrected defaults.
+
+25. **FIXED: `Issues - Pending Items.md` config exception entry had wrong defaults** -- Item 12 referenced `50` and `10MB` instead of `10` and `50MB`. Corrected.
+
+26. **ADDED: Log file sensitivity note** -- Added item 13 warning that proxy log files may contain sensitive data (per refined request Section 9 item 4).
+
+### Proxy Inspector Code Review (2026-04-11)
+
+27. **FIXED: Duplicate React keys in InteractionCard tool badges** -- `toolCalls.map(tool => <span key={tool}>)` would produce duplicate keys when the same tool appears multiple times (e.g., `list_notebooks` called twice). Fixed to use `key={tool}-${idx}` with the array index.
+
+28. **FIXED: React inline styles with CSS variable references** -- `InteractionList.tsx` empty state used `padding: 'var(--spacing-lg)'` and `color: 'var(--text-dim)'` in inline styles. CSS custom property references do not work in React inline style objects. Replaced with literal values.
+
+29. **FIXED: IPC handler re-registration crash on macOS window re-creation** -- `registerIpcHandlers()` was called each time a window was created (including macOS `activate` re-creation). `ipcMain.handle()` throws on duplicate registration. Added a `handlersRegistered` guard and moved `mainWindow` to a module-level `activeWindow` variable so the tailer's `onNewChunk` callback always references the current window.
 
 ### Code Review Fixes (2026-04-10, Python era)
 
