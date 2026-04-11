@@ -3555,3 +3555,224 @@ With 46 tools, the LLM's context window will include all 46 tool schemas. Estima
 - Total fixed overhead: ~5,500-7,800 tokens per turn
 
 This remains well within Gemini 2.5 Flash's context window. The 5 additional YouTube tools add approximately 500-750 tokens of schema overhead per turn.
+
+---
+
+## 11. Terminal User Interface (TUI) Architecture
+
+**Full design document:** `docs/design/technical-design-terminal-ui.md`
+
+This section summarizes the TUI architecture. For complete data models, component designs, shortcut mappings (55+ entries), and interface contracts, see the full technical design document.
+
+### 11.1 Overview
+
+The TUI is a custom terminal-based chat interface that replaces `npx adk web` and `npx adk run` as the primary user-facing entry point. It provides a conversational chat experience with the NotebookLM agent with full macOS text-editing keyboard support.
+
+**Technology stack:** Ink 7 (React for CLI) + React 19 + Kitty keyboard protocol + Node.js Worker Threads
+
+**Entry point:** `npx tsx notebooklm_agent/tui.ts` (npm script: `npm run tui`)
+
+### 11.2 Component Architecture
+
+```
+<App>                                  # Root: runner setup, session, layout, key routing
+  <Box flexDirection="column" height={rows}>
+    <StatusBar />                      # height=1, flexShrink=0 (agent status, session, hints)
+    <ChatHistory />                    # flexGrow=1, overflow="hidden" (manual windowing scroll)
+      <MessageBubble />                # Per-message rendering (user vs agent styling)
+      <ToolCallIndicator />            # Animated spinner during tool execution
+    <InputArea />                      # flexShrink=0, 1-10 lines + border (cursor, selection)
+  </Box>
+</App>
+```
+
+### 11.3 Data Flow
+
+```
+Keystroke -> useInput -> resolveKeyAction -> EditAction -> dispatch to:
+  - useTextEditor (text buffer operations)
+  - useScrollManager (chat history scroll)
+  - useAgent.sendMessage (submit)
+  - App-level handlers (cancel, exit, slash commands)
+```
+
+### 11.4 Thread Architecture
+
+```
+Main Thread (Ink render loop)  <-- MessagePort -->  Worker Thread (InMemoryRunner)
+  - React state + rendering                          - rootAgent import
+  - useInput key events                               - runAsync() iteration
+  - useAnimation spinners                              - toStructuredEvents()
+  - All UI interactions                                - execFileSync tool calls
+```
+
+The worker thread isolates `execFileSync` calls in tools (e.g., `nlm-runner.ts`) from the main thread, keeping the TUI responsive during tool execution.
+
+### 11.5 Key Data Models
+
+| Model | File | Purpose |
+|-------|------|---------|
+| `TextBuffer` | `tui/lib/text-buffer.ts` | Immutable text buffer with cursor and selection |
+| `EditAction` | `tui/lib/edit-actions.ts` | Discriminated union of 20+ action types |
+| `Message` | `tui/hooks/useAgent.ts` | Chat message (role, text, streaming state, tool calls) |
+| `AgentStatus` | `tui/hooks/useAgent.ts` | `'idle' \| 'thinking' \| 'streaming' \| 'tool_call' \| 'error'` |
+| `MainToWorker` / `WorkerToMain` | `tui/worker/agent-protocol.ts` | Worker thread communication protocol |
+| `KillRing` | `tui/lib/kill-ring.ts` | Circular buffer for Ctrl+K/U/W/Y |
+| `UndoStack` | `tui/lib/undo-stack.ts` | Operation-based undo/redo (300ms grouping) |
+
+### 11.6 File Structure
+
+```
+notebooklm_agent/
+  tui.ts                           # CLI entry point
+  tui/
+    index.tsx                      # <App> root component
+    components/
+      ChatHistory.tsx              # Scrollable message list with windowing
+      InputArea.tsx                # Multi-line text input with cursor/selection
+      StatusBar.tsx                # Agent status, session info, key hints
+      ToolCallIndicator.tsx        # Animated spinner for tool calls
+      MessageBubble.tsx            # Single message rendering
+    hooks/
+      useAgent.ts                  # InMemoryRunner wrapper, event processing
+      useTextEditor.ts             # TextBuffer state + undo + kill ring
+      useInputHistory.ts           # Up/Down arrow input recall
+      useKeyHandler.ts             # resolveKeyAction function
+      useScrollManager.ts          # Scroll state for chat history
+    lib/
+      text-buffer.ts               # Pure TextBuffer data structure + operations
+      word-boundaries.ts           # macOS word boundary detection
+      kill-ring.ts                 # Circular buffer for killed text
+      undo-stack.ts                # Operation-based undo/redo
+      edit-actions.ts              # EditAction union type definition
+    worker/
+      agent-worker.ts              # Worker thread: runs InMemoryRunner
+      agent-protocol.ts            # Shared message types
+```
+
+### 11.7 Key Architectural Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| UI framework | Ink 7 | Battle-tested (Claude Code), React model, Kitty protocol support |
+| Keyboard protocol | Kitty `mode: 'enabled'` | Unambiguous modifier detection; graceful degradation |
+| Primary keybindings | Ctrl/Emacs | Cmd+key intercepted by macOS; Ctrl works everywhere |
+| Scrolling | Manual windowing | Full control; spec requires keyboard scrollback |
+| Agent execution | Worker thread | `execFileSync` blocks event loop; worker keeps TUI responsive |
+| Event classification | `toStructuredEvents()` | Official ADK API, handles edge cases |
+| Streaming | `StreamingMode.SSE` | Token-by-token display for responsive UX |
+| Alternate screen | Yes | Clean terminal state on exit |
+| Undo granularity | Per-action, 300ms grouping | Matches macOS TextEdit behavior |
+| Configuration | No new env vars | TUI reuses existing AgentConfig |
+
+### 11.8 New Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `ink` | ^7.0.0 | Terminal UI framework |
+| `react` | ^19.2.0 | Peer dependency of Ink 7 |
+| `@types/react` | ^19.x | TypeScript types (dev) |
+
+### 11.9 Implementation Phases
+
+| Phase | Name | Dependencies |
+|-------|------|-------------|
+| 1 | Project Setup and Skeleton | None |
+| 2 | Text Buffer and Core Editing Logic | Phase 1 |
+| 3 | Key Handler and Shortcut Mapping | Phase 2 |
+| 4 | InputArea Component | Phases 2, 3 |
+| 5 | ADK Agent Integration Hook | Phase 1 |
+| 6 | ChatHistory and Message Rendering | Phase 1 |
+| 7 | StatusBar and ToolCallIndicator | Phase 1 |
+| 8 | App Shell and Layout Assembly | Phases 4, 5, 6, 7 |
+| 9 | Worker Thread for Agent Execution | Phases 5, 8 |
+| 10 | Polish and Terminal Compatibility | Phase 8 |
+
+**Parallelization:** After Phase 1, four lanes run independently: Lane A (input: 2->3->4), Lane B (agent: 5), Lane C (display: 6), Lane D (chrome: 7). All converge at Phase 8.
+
+### 11.10 TUI Slash Commands (Session & Conversation Management)
+
+**Full technical design:** `docs/design/technical-design-tui-commands.md`  
+**Implementation plan:** `docs/design/plan-005-tui-commands.md`  
+**Refined request:** `docs/reference/refined-request-tui-commands.md`
+
+Four slash commands provide local (non-agent) visibility into and control over the conversation session:
+
+| Command | Aliases | Description | Async |
+|---------|---------|-------------|-------|
+| `/history` | -- | Display formatted conversation history as a system message | No |
+| `/memory` | `/state` | Display ADK session state key-value pairs | Yes |
+| `/new` | `/reset` | Delete session, create new one, clear chat | Yes |
+| `/last` | `/raw` | Display last request/response exchange from ADK events | Yes |
+
+#### Type Change: System Messages
+
+The `Message.role` union type is extended from `'user' | 'agent'` to `'user' | 'agent' | 'system'`. System messages are TUI-local: they exist only in the React `messages` state and are never sent to the ADK runner. The `sendMessage` function constructs its own `Content` from its text parameter, so system messages in the `messages` array are inherently safe.
+
+#### useAgent Hook Extensions
+
+The `UseAgentResult` interface gains four new methods:
+
+```typescript
+export interface UseAgentResult {
+  // ... existing fields ...
+
+  getSessionState: () => Promise<Record<string, unknown>>;
+  getSessionEvents: () => Promise<Event[]>;
+  resetSession: () => Promise<string>;
+  addSystemMessage: (text: string) => void;
+}
+```
+
+- `getSessionState()` — Calls `runner.sessionService.getSession()` and returns `session.state`.
+- `getSessionEvents()` — Calls `runner.sessionService.getSession()` and returns `session.events`.
+- `resetSession()` — Deletes current session, creates a new one, clears `messages` state, updates `sessionId`, returns new session ID. Throws if runner not initialized.
+- `addSystemMessage(text)` — Appends a `Message` with `role: 'system'`, `toolCalls: []`, `isPartial: false` to the `messages` array. Synchronous. Never throws.
+
+#### Format Functions Module (`lib/format-commands.ts`)
+
+Three pure functions with no React dependency:
+
+```typescript
+export function formatHistory(messages: Message[]): string;
+export function formatSessionState(state: Record<string, unknown>, sessionId: string): string;
+export function formatLastExchange(events: Event[]): string;
+```
+
+- `formatHistory` — Formats each message as `[ROLE] <ISO timestamp>` header + indented body + optional tool calls section. Empty fallback: `'No messages in the current session.'`
+- `formatSessionState` — Lists alphabetically-sorted key-value pairs with `JSON.stringify()` values. Empty fallback: `'Session state is empty.'`
+- `formatLastExchange` — Scans events backward for last user event, extracts request content and all subsequent response events (text, function calls via `getFunctionCalls()`, function responses via `getFunctionResponses()`, token usage). Empty fallback: `'No request/response data available.'`
+
+#### Command Routing (index.tsx `handleSubmit`)
+
+Commands are matched via `text.toLowerCase().trim()` in the existing if-chain. Each handler:
+1. Records input in history via `history.addEntry(text)`.
+2. Checks `agent.agentStatus === 'idle'`. If not idle: system message `'Command unavailable while agent is running.'`.
+3. Executes command logic (async commands use `void (async () => { ... })()` IIFE with try/catch).
+4. Inserts output via `agent.addSystemMessage(output)`.
+5. Clears input via `editor.clear()`.
+6. Returns early (prevents fallthrough to `agent.sendMessage`).
+
+#### System Message Rendering (MessageBubble)
+
+A third branch is added: `[system]` label in yellow/dim, body text with `dimColor`, tool call indicators hidden.
+
+#### Implementation Units
+
+| Unit | Scope | Dependencies |
+|------|-------|-------------|
+| 1 | Types + useAgent extensions | None (foundation) |
+| 2 | format-commands.ts + tests | Unit 1 types only |
+| 3 | Command routing + MessageBubble + StatusBar | Units 1 and 2 |
+
+#### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| System messages are TUI-local only | Never pollute agent conversation. `sendMessage` creates its own `Content` internally. |
+| Pure formatting functions in `lib/` | Testable without React. No side effects. |
+| Async IIFE pattern for `/memory`, `/new`, `/last` | Consistent with existing `sendMessage` pattern. React callbacks cannot be async. |
+| No ChatHistory changes needed | `estimateLineCount` and `computeVisibleMessages` operate generically on `Message[]`. |
+| Yellow/dim styling for system messages | Visually distinct from green (user) and cyan (agent). |
+| Case-insensitive commands via `toLowerCase()` | Existing pattern, no additional code needed. |
+| Input history recorded for all slash commands | Enables up-arrow recall of commands. |

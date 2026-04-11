@@ -9,8 +9,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
-  "include": ["notebooklm_agent/**/*.ts", "test_scripts/**/*.ts"],
+  "include": ["notebooklm_agent/**/*.ts", "notebooklm_agent/**/*.tsx", "test_scripts/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

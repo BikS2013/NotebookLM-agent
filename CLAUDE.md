@@ -204,3 +204,138 @@ An AI agent built on Google ADK (Agent Development Kit) that manages Google Note
         Tests: test_scripts/test-filesystem-tools.test.ts (25 tests)
     </info>
 </FilesystemTools>
+
+<TerminalUI>
+    <objective>
+        Interactive terminal user interface (TUI) for chatting with the NotebookLM agent.
+        Built on Ink 7 (React for CLI) with full macOS keyboard navigation support
+        including Option+Arrow word navigation, Shift+Arrow selection, Emacs keybindings
+        (Ctrl+A/E/K/W/T/Y), undo/redo, kill ring, and Kitty keyboard protocol support.
+    </objective>
+    <command>
+        npm run tui
+        # Or directly: npx tsx notebooklm_agent/tui.ts
+    </command>
+    <info>
+        The TUI provides a three-region terminal interface:
+        - StatusBar (top): agent status with animated spinner, session ID, key hints
+        - ChatHistory (middle): scrollable message list with windowing
+        - InputArea (bottom): multi-line text input with cursor and selection highlighting
+
+        Architecture:
+            notebooklm_agent/tui.ts              CLI entry point (loads dotenv, renders App)
+            notebooklm_agent/tui/index.tsx        App root component (wires hooks + components)
+            notebooklm_agent/tui/types.ts         Shared types (Message, AgentStatus, ToolCallInfo)
+            notebooklm_agent/tui/lib/             Pure library modules (no React dependency)
+                text-buffer.ts                    Immutable TextBuffer with 22 pure operations
+                word-boundaries.ts                macOS word boundary detection
+                kill-ring.ts                      Circular buffer for killed text (Emacs Ctrl+K/Y)
+                undo-stack.ts                     Operation-based undo/redo with 300ms grouping
+                edit-actions.ts                   EditAction discriminated union (shared contract)
+                format-commands.ts                Pure formatters for /history, /memory, /last output
+            notebooklm_agent/tui/hooks/           React hooks
+                useAgent.ts                       ADK InMemoryRunner wrapper, event stream processing
+                useTextEditor.ts                  TextBuffer state + undo + kill ring
+                useKeyHandler.ts                  47 keyboard shortcuts → EditAction mapping
+                useInputHistory.ts                Up/Down arrow input recall (50 entries)
+                useScrollManager.ts               Chat history scroll state
+            notebooklm_agent/tui/components/      Ink React components
+                InputArea.tsx                     Multi-line input with cursor/selection rendering
+                ChatHistory.tsx                   Scrollable message list with windowing
+                MessageBubble.tsx                 Single message rendering (user/agent/system)
+                StatusBar.tsx                     Agent status, session ID, key hints
+                ToolCallIndicator.tsx             Animated spinner for tool calls
+            notebooklm_agent/tui/worker/          Worker thread (protocol types, future impl)
+                agent-protocol.ts                 MainToWorker/WorkerToMain message types
+
+        Keyboard shortcuts (47 total):
+            Enter                   Send message
+            Shift+Enter / Ctrl+O    New line in input
+            Option+Left/Right       Word-by-word navigation
+            Ctrl+A / Ctrl+E         Line start / line end
+            Ctrl+F / Ctrl+B         Forward / backward character
+            Ctrl+N / Ctrl+P         Down / up line
+            Shift+Arrow             Text selection
+            Shift+Option+Arrow      Word selection
+            Option+Backspace        Delete previous word
+            Ctrl+K                  Kill to end of line
+            Ctrl+U                  Kill to start of line
+            Ctrl+W                  Kill previous word
+            Ctrl+Y                  Yank (paste from kill ring)
+            Ctrl+T                  Transpose characters
+            Ctrl+Z                  Undo
+            Ctrl+Shift+Z            Redo
+            PageUp / PageDown       Scroll chat history
+            Ctrl+C                  Cancel agent / exit
+            Ctrl+D                  Delete forward / exit (empty)
+            /quit, /exit            Exit TUI
+
+        Slash commands:
+            /history                Show conversation history
+            /memory (alias /state)  Show ADK session state (agent memory)
+            /new (alias /reset)     Clear memory and start new conversation
+            /last (alias /raw)      Show last request/response exchanged with model
+            /quit (alias /exit)     Exit TUI
+            /clear                  Clear input area
+
+        Kitty keyboard protocol:
+            Enabled by default for terminals that support it (iTerm2, Kitty, Alacritty,
+            Ghostty, WezTerm). Enables Shift+Enter detection, Cmd+Arrow via Super key
+            mapping, and full modifier disambiguation. Terminal.app gracefully degrades
+            to legacy escape sequences with Ctrl/Emacs bindings as primary.
+
+        Prerequisites:
+            - All standard agent env vars (GOOGLE_GENAI_API_KEY, etc.)
+            - Node.js (LTS)
+            - Terminal with Kitty protocol support recommended (iTerm2, Kitty)
+
+        Tests:
+            test_scripts/test-text-buffer.test.ts (87 tests)
+            test_scripts/test-word-boundaries.test.ts (28 tests)
+            test_scripts/test-kill-ring.test.ts (11 tests)
+            test_scripts/test-undo-stack.test.ts (17 tests)
+            test_scripts/test-key-handler.test.ts (49 tests)
+            test_scripts/test-format-commands.test.ts (27 tests)
+            Total: 219 tests
+    </info>
+</TerminalUI>
+
+<CLI>
+    <objective>
+        Simple readline-based CLI for chatting with the NotebookLM agent.
+        Supports the same slash commands as the TUI: /history, /memory, /new, /last.
+        Streams agent responses with inline tool call indicators.
+    </objective>
+    <command>
+        npm run cli
+        # Or directly: npx tsx notebooklm_agent/cli.ts
+    </command>
+    <info>
+        The CLI provides a minimal terminal interface without Ink/React dependencies.
+        Uses Node.js readline for input and ANSI escape codes for colored output.
+        Shares the InMemoryRunner and format-commands module with the TUI.
+
+        Slash commands:
+            /history           Show conversation history
+            /memory, /state    Show ADK session state (agent memory)
+            /new, /reset       Clear memory and start new session
+            /last, /raw        Show last request/response exchanged with model
+            /help              Show available commands
+            /quit, /exit       Exit the CLI
+
+        Output formatting:
+            - Agent responses stream character-by-character
+            - Tool calls shown inline: ↳ calling tool_name({args}) ✓
+            - System messages in dim yellow [system] prefix
+            - Errors in red
+
+        Architecture:
+            notebooklm_agent/cli.ts              Entry point (readline loop, runner, commands)
+            notebooklm_agent/tui/lib/format-commands.ts  Shared formatting (reused from TUI)
+            notebooklm_agent/tui/types.ts        Shared Message type (reused from TUI)
+
+        Prerequisites:
+            - All standard agent env vars (GOOGLE_GENAI_API_KEY, etc.)
+            - Node.js (LTS)
+    </info>
+</CLI>

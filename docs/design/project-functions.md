@@ -353,3 +353,191 @@ The free tier allows ~50 API queries/day. The agent should be aware of this and 
 ### C-5: `adk web --no-reload`
 
 Always run `adk web` with `--no-reload` flag to avoid subprocess transport issues.
+
+---
+
+## Terminal User Interface (TUI) Requirements
+
+### FR-TUI-01: Chat Interface Layout
+
+The TUI shall present a three-region layout:
+- **Status bar** (fixed, 1 line) -- displays agent status, session info, and keyboard shortcut hints.
+- **Message history area** (scrollable, flexGrow) -- displays the conversation between the user and the agent, distinguishing user messages from agent responses visually (color, prefix).
+- **Input area** (multi-line capable, flexShrink=0) -- a text input region at the bottom where the user composes messages.
+
+**Implementation**: Ink 7 Flexbox layout with `<Box flexDirection="column" height={rows}>`.
+
+---
+
+### FR-TUI-02: Message Submission
+
+- Pressing **Enter** (without Shift) sends the current input to the agent.
+- Pressing **Shift+Enter** inserts a newline in the input area (multi-line input support). Requires Kitty keyboard protocol; **Ctrl+O** as fallback for terminals without Kitty support.
+
+**Component**: `InputArea.tsx`
+
+---
+
+### FR-TUI-03: Programmatic Agent Integration
+
+The TUI shall invoke the NotebookLM ADK agent programmatically using `InMemoryRunner` from `@google/adk`, importing `rootAgent` directly from `agent.ts`. It shall not spawn a subprocess. Responses are streamed token-by-token using `StreamingMode.SSE`. Events are classified using `toStructuredEvents()`.
+
+**Hook**: `useAgent.ts`
+
+---
+
+### FR-TUI-04: Conversation History Display
+
+- User messages and agent responses displayed with clear visual distinction (green for user, cyan for agent).
+- Message history is scrollable via keyboard: PageUp/PageDown (page), Home/End (top/bottom).
+- Long agent responses word-wrap within the terminal width.
+- Auto-scroll to bottom on new messages (unless user has scrolled up).
+
+**Components**: `ChatHistory.tsx`, `Message.tsx`
+
+---
+
+### FR-TUI-05: Tool Call Visibility
+
+When the agent invokes a tool, the TUI shall display a spinner with the tool name (e.g., "Calling search_youtube..."). The spinner animates using `useAnimation` from Ink. Tool results are not shown directly; the agent's summarized response is displayed instead.
+
+**Component**: `ToolCallIndicator.tsx`
+
+---
+
+### FR-TUI-06: Input History
+
+Per-session input history (up to 50 entries). **Up Arrow** (when cursor is on the first line of input) recalls the previous input. **Down Arrow** (when cursor is on the last line) navigates forward in history. The "draft" input is preserved when navigating history.
+
+**Hook**: `useInputHistory.ts`
+
+---
+
+### FR-TUI-07: Graceful Exit
+
+- **Ctrl+C** cancels the current agent operation (if running) or exits the TUI (if idle).
+- **Ctrl+D** on empty input exits the TUI; on non-empty input, deletes character forward (Emacs).
+- `/quit` or `/exit` commands exit the TUI.
+
+**Component**: `App` (index.tsx)
+
+---
+
+### FR-TUI-08: Status Bar
+
+Displays agent status (idle/thinking/streaming/tool_call/error) with color-coded indicator, session ID, and keyboard shortcut hints.
+
+**Component**: `StatusBar.tsx`
+
+---
+
+### FR-TUI-09: Slash Commands
+
+- `/clear` -- clear the message history display.
+- `/quit` or `/exit` -- exit the TUI.
+- `/help` -- display available commands and keyboard shortcuts.
+
+**Component**: `App` (index.tsx)
+
+---
+
+### FR-TUI-14: Slash Command — `/history`
+
+Typing `/history` inserts a system message into the chat history containing all conversation messages formatted with role, ISO timestamp, text content, and tool call details. System messages are visually distinct from user/agent messages (dim/yellow styling). If the conversation is empty, displays `No messages in the current session.` The command is only available when the agent status is `idle`. The command is case-insensitive and added to input history for up-arrow recall.
+
+**Pure function**: `formatHistory()` in `lib/format-commands.ts`  
+**Component**: `App` (index.tsx), `MessageBubble.tsx` (system role rendering)
+
+---
+
+### FR-TUI-15: Slash Command — `/memory` (alias `/state`)
+
+Typing `/memory` or `/state` inserts a system message displaying the ADK session state (key-value pairs stored in `Session.state`). Shows session ID in the header, each key-value pair on its own line with JSON-stringified values, keys sorted alphabetically. If state is empty, displays `Session state is empty.` Only available when agent status is `idle`. Requires async access to `runner.sessionService.getSession()`.
+
+**Pure function**: `formatSessionState()` in `lib/format-commands.ts`  
+**Hook method**: `useAgent.getSessionState()`  
+**Component**: `App` (index.tsx)
+
+---
+
+### FR-TUI-16: Slash Command — `/new` (alias `/reset`)
+
+Typing `/new` or `/reset` deletes the current ADK session, creates a new one, clears all messages from the chat history, resets the scroll position, and inserts a confirmation system message with the new session ID. This is a destructive operation that executes immediately without confirmation. If session deletion or creation fails, an error system message is displayed and the existing session remains intact. Only available when agent status is `idle`.
+
+**Hook method**: `useAgent.resetSession()`  
+**Component**: `App` (index.tsx)
+
+---
+
+### FR-TUI-17: Slash Command — `/last` (alias `/raw`)
+
+Typing `/last` or `/raw` inserts a system message showing the last user-to-model exchange extracted from the ADK session events. Displays the request (user content) and all response events (model text, function calls, function responses) in a structured format. Token usage metadata (prompt/completion tokens) is shown when available. If no events exist, displays `No request/response data available.` Only available when agent status is `idle`. Uses ADK helper functions `getFunctionCalls()` and `getFunctionResponses()` for event parsing.
+
+**Pure function**: `formatLastExchange()` in `lib/format-commands.ts`  
+**Hook method**: `useAgent.getSessionEvents()`  
+**Component**: `App` (index.tsx)
+
+---
+
+### FR-TUI-10: Terminal Resize Handling
+
+The TUI responds to terminal resize events (SIGWINCH) via `useWindowSize` from Ink and re-renders the layout correctly. Root `<Box>` height is bound to `rows`.
+
+---
+
+### FR-TUI-11: macOS Text Editing Keyboard Shortcuts
+
+The input area must support 50+ keyboard shortcuts for cursor movement, text selection, deletion, text manipulation, clipboard operations, and undo/redo. Primary bindings are Ctrl/Emacs style (works in all terminals). Cmd+key bindings available only in Kitty-protocol terminals with Super key configuration.
+
+Key groups:
+- **Movement**: Arrow keys, Option+Arrow (word), Ctrl+A/E (line), Ctrl+F/B (char), Ctrl+N/P (line), Home/End
+- **Selection**: Shift+Arrow (char), Shift+Option+Arrow (word), Shift+Home/End (line), Select All
+- **Deletion**: Backspace, Delete, Option+Backspace (word), Ctrl+H/D, Ctrl+K (kill to EOL), Ctrl+U (kill to BOL), Ctrl+W (kill word)
+- **Manipulation**: Ctrl+T (transpose), Ctrl+O (open line), Ctrl+Y (yank from kill ring)
+- **Undo/Redo**: Ctrl+Z / Ctrl+Shift+Z
+
+**Components**: `useKeyHandler.ts`, `useTextEditor.ts`, `text-buffer.ts`, `word-boundaries.ts`, `kill-ring.ts`, `undo-stack.ts`
+
+---
+
+### FR-TUI-12: Worker Thread Agent Execution
+
+The agent runs in a Node.js Worker thread to prevent `execFileSync` calls in tools from blocking the TUI's event loop. The main thread communicates with the worker via `MessagePort`. The TUI remains responsive (spinner animates, input works) during tool execution.
+
+**Components**: `agent-worker.ts`, `agent-protocol.ts`
+
+---
+
+### FR-TUI-13: Streaming Response Display
+
+Agent responses appear token-by-token as they stream from the LLM via `StreamingMode.SSE`. Partial messages are displayed with a streaming indicator. The user can type while a response is streaming (non-blocking input).
+
+**Hook**: `useAgent.ts`
+
+---
+
+### TUI Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| NFR-TUI-01 | Input latency < 16ms from keypress to screen update |
+| NFR-TUI-02 | Works in iTerm2 (full), Terminal.app (graceful degradation), and at least one other terminal |
+| NFR-TUI-03 | Node.js only (no Python, Go, Rust dependencies) |
+| NFR-TUI-04 | Startup time < 3 seconds |
+| NFR-TUI-05 | Memory < 200MB for typical sessions |
+| NFR-TUI-06 | All functionality accessible via keyboard (no mouse requirement) |
+| NFR-TUI-07 | Terminal widths 80-300+ columns, minimum 24 rows |
+
+---
+
+### TUI Constraints
+
+| Constraint | Description |
+|------------|-------------|
+| C-TUI-01 | TypeScript implementation, ES modules |
+| C-TUI-02 | Ink 7 + React 19 framework |
+| C-TUI-03 | Kitty keyboard protocol (`mode: 'enabled'`) for full shortcuts |
+| C-TUI-04 | Same `.env` configuration as existing agent (no new env vars) |
+| C-TUI-05 | Runnable via `npx tsx` and `npm run tui` |
+| C-TUI-06 | macOS is primary platform |
+| C-TUI-07 | Agent code (`agent.ts`, `tools/*`) must not be modified |

@@ -2,7 +2,19 @@
 
 ## Pending
 
+### High Priority
+
+7. **TUI: Cmd+key shortcuts cannot be detected in standard terminal mode** -- The refined request (refined-request-terminal-ui.md) specifies Cmd+C, Cmd+V, Cmd+Z, Cmd+Left/Right, Cmd+A, etc. as required shortcuts. However, macOS intercepts Cmd+key at the OS/terminal emulator level before it reaches stdin. These shortcuts are fundamentally undetectable in the standard terminal protocol. The spec must be revised to make Ctrl/Emacs bindings the primary shortcuts, with Cmd+key available only in terminals that support the Kitty keyboard protocol with Cmd mapped to Super. See `docs/reference/investigation-terminal-ui.md` Section 4.1 for full analysis.
+
+8. **TUI: execFileSync in nlm-runner.ts will block UI during tool calls** -- The `nlm-runner.ts` module uses `execFileSync` which blocks the Node.js event loop. When the agent calls tools, the TUI will freeze (no rendering, no input, no spinner animation). Must be addressed via worker thread, async conversion, or accepted as a v1 limitation. See `docs/reference/investigation-terminal-ui.md` Section 4.3.
+
+9. **TUI: ChatHistory uses hardcoded `estimatedVisibleHeight = 40`** -- The `ChatHistory.tsx` component uses a hardcoded value of 40 for the visible height estimation instead of computing it from the actual terminal dimensions. This means the windowing algorithm may render too many or too few messages. The parent `Box` with `overflow="hidden"` clips excess, so it works visually, but the scroll indicators may show incorrect line counts. A proper fix would pass the computed visible height from the App component.
+
 ### Medium Priority
+
+10. **TUI: Kitty keyboard flags diverge from design** -- `tui.ts` uses `flags: ['disambiguateEscapeCodes', 'reportAlternateKeys']` but the design document (ADR-2) specifies `flags: ['disambiguateEscapeCodes', 'reportEventTypes']`. The `reportAlternateKeys` flag reports the base key character for modified keys, while `reportEventTypes` enables press/repeat/release detection. Both are valid choices, but the implementation should be aligned with the design or the design updated.
+
+11. **TUI: Worker thread (Phase 9) not yet implemented** -- The `useAgent` hook runs `InMemoryRunner.runAsync()` directly on the main thread. As noted in item #8, this will block the UI during tool calls. The worker thread architecture is fully designed (Section 5.2 of technical-design-terminal-ui.md) but not yet implemented. `tui/worker/agent-protocol.ts` contains the protocol types ready for use.
 
 1. **Configuration guide not yet created** -- The `docs/design/configuration-guide.md` document needs to be created per project conventions.
 
@@ -59,6 +71,12 @@
 13. **ADDED: CLAUDE.md YouTube tool documentation** -- Added `<YouTubeTools>` section documenting all 5 tools and the supporting `youtube-client.ts` module.
 
 14. **ADDED: `project-functions.md` YouTube FRs** -- Added FR-YT-01 through FR-YT-05 documenting functional requirements for all 5 YouTube tools.
+
+### TUI Code Review (2026-04-11)
+
+19. **FIXED: `@types/react` misplaced in dependencies** -- `@types/react` was listed under `dependencies` instead of `devDependencies` in `package.json`. Moved to `devDependencies` per the design document (Appendix A).
+
+20. **FIXED: Unused variable `curLine` in `useTextEditor.ts`** -- The `killToEnd` case destructured `{ line: curLine }` from `getCursorPosition()` but never used `curLine`. Removed the unnecessary destructuring.
 
 ### Code Review Fixes (2026-04-10, Python era)
 
