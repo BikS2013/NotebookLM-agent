@@ -8,7 +8,7 @@ interface DetailPanelProps {
 function formatDuration(ms: number | null): string {
   if (ms === null) return '-'
   if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
+  return `${(ms / 1000).toFixed(2)}s`
 }
 
 function formatTokens(n: number): string {
@@ -19,11 +19,12 @@ function formatTokens(n: number): string {
 
 export function DetailPanel({ selectedId }: DetailPanelProps) {
   const { detail, isLoading, error } = useDetail(selectedId)
+
   if (!selectedId) {
     return (
       <div className="detail-panel">
         <div className="detail-placeholder">
-          Select an interaction to view details
+          Select an interaction to inspect
         </div>
       </div>
     )
@@ -41,7 +42,7 @@ export function DetailPanel({ selectedId }: DetailPanelProps) {
     return (
       <div className="detail-panel">
         <div className="detail-placeholder" style={{ color: 'var(--error)' }}>
-          Error: {error}
+          {error}
         </div>
       </div>
     )
@@ -50,24 +51,63 @@ export function DetailPanel({ selectedId }: DetailPanelProps) {
   if (!detail) {
     return (
       <div className="detail-panel">
-        <div className="detail-placeholder">No data available</div>
+        <div className="detail-placeholder">No data</div>
       </div>
     )
   }
 
   const { summary, events } = detail
+  const statusClass = summary.status === 'complete' ? 'complete'
+    : summary.status === 'error' ? 'error' : 'in-progress'
+  const statusLabel = summary.status === 'complete' ? 'COMPLETED'
+    : summary.status === 'error' ? 'ERROR' : 'IN PROGRESS'
 
   return (
     <div className="detail-panel">
       <div className="detail-header">
-        <div className="detail-header-title">
-          #{summary.index} {summary.userMessage || '(empty message)'}
+        {/* Title row: interaction ID + execution time */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+          <div className="detail-header-title">
+            {summary.userMessage || `interaction-${summary.index}`}
+          </div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div className="detail-execution-label">Execution Time</div>
+            <div className="detail-execution-time">{formatDuration(summary.durationMs)}</div>
+          </div>
         </div>
-        <div className="detail-header-meta">
-          <span>ID: <code style={{ fontSize: 10 }}>{summary.id}</code></span>
-          <span>Duration: {formatDuration(summary.durationMs)}</span>
-          <span>Tokens: {formatTokens(summary.totalTokens)}</span>
-          <span>Events: {summary.eventCount}</span>
+
+        {/* Status + meta badges */}
+        <div className="detail-header-badges">
+          <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
+            {summary.eventCount} events
+          </span>
+        </div>
+
+        {/* Stat cards */}
+        <div className="detail-header-stats">
+          <div className="detail-stat-card">
+            <div className="detail-stat-label">Round Trips</div>
+            <div className="detail-stat-value">{summary.roundTripCount}</div>
+          </div>
+          <div className="detail-stat-card">
+            <div className="detail-stat-label">Prompt Tokens</div>
+            <div className="detail-stat-value">{formatTokens(summary.totalPromptTokens)}</div>
+          </div>
+          <div className="detail-stat-card">
+            <div className="detail-stat-label">Output Tokens</div>
+            <div className="detail-stat-value">{formatTokens(summary.totalCompletionTokens)}</div>
+          </div>
+          <div className="detail-stat-card">
+            <div className="detail-stat-label">Total Tokens</div>
+            <div className="detail-stat-value">{formatTokens(summary.totalTokens)}</div>
+          </div>
+          {summary.toolCalls.length > 0 && (
+            <div className="detail-stat-card">
+              <div className="detail-stat-label">Tool Calls</div>
+              <div className="detail-stat-value">{summary.toolCalls.length}</div>
+            </div>
+          )}
         </div>
       </div>
 

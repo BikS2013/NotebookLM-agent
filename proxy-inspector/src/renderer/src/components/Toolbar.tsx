@@ -8,7 +8,7 @@ interface ToolbarProps {
   onSearchChange: (query: string) => void
   onOpenFile: () => void
   onReloadFile: () => void
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'midnight'
   onToggleTheme: () => void
 }
 
@@ -81,9 +81,9 @@ export function Toolbar({
       <button
         className="theme-toggle-btn"
         onClick={onToggleTheme}
-        title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        title={`Theme: ${theme} (click to cycle)`}
       >
-        {theme === 'dark' ? '☀' : '☽'}
+        {theme === 'dark' ? '☀' : theme === 'midnight' ? '◐' : '☽'}
       </button>
     </div>
   )

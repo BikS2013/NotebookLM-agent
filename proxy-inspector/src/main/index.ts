@@ -137,7 +137,7 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#1e1e2e',
+    backgroundColor: '#0d0f14',
   });
 
   // Save window state on close

@@ -813,7 +813,7 @@ function createWindow() {
       sandbox: true
     },
     titleBarStyle: "hiddenInset",
-    backgroundColor: "#1e1e2e"
+    backgroundColor: "#0d0f14"
   });
   win.on("close", () => {
     saveWindowState(win);

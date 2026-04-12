@@ -39,7 +39,23 @@ const EVENT_DOT_COLORS: Record<EventType, string> = {
   llm_call_end: 'var(--event-llm-res)',
   tool_call_start: 'var(--event-tool)',
   tool_call_end: 'var(--event-result)',
-  turn_summary: 'var(--event-end)',
+  turn_summary: 'var(--accent)',
+}
+
+const EVENT_ICONS: Record<EventType, string> = {
+  interaction_start: '▶',
+  llm_request: '⬆',
+  llm_response: '⬇',
+  tool_start: '⚡',
+  tool_result: '✦',
+  tool_error: '✕',
+  llm_error: '✕',
+  interaction_end: '■',
+  llm_call_start: '⬆',
+  llm_call_end: '⬇',
+  tool_call_start: '⚡',
+  tool_call_end: '✦',
+  turn_summary: '◆',
 }
 
 function formatRelativeMs(ms: number): string {
@@ -452,6 +468,7 @@ export function EventCard({ event, relativeMs }: EventCardProps): JSX.Element {
       <div className="event-card-dot" style={{ background: dotColor }} />
 
       <div className="event-card-header" onClick={() => setExpanded(e => !e)}>
+        <span className="event-type-icon" style={{ color: dotColor }}>{EVENT_ICONS[event.event]}</span>
         <span className={`event-type-badge ${event.event}`}>{label}</span>
         <span className="event-card-timestamp">{formatRelativeMs(relativeMs)}</span>
         {event.roundTrip !== undefined && (

@@ -12598,8 +12598,8 @@ function Toolbar({
       {
         className: "theme-toggle-btn",
         onClick: onToggleTheme,
-        title: `Switch to ${theme === "dark" ? "light" : "dark"} theme`,
-        children: theme === "dark" ? "☀" : "☽"
+        title: `Theme: ${theme} (click to cycle)`,
+        children: theme === "dark" ? "☀" : theme === "midnight" ? "◐" : "☽"
       }
     )
   ] });
@@ -13112,7 +13112,22 @@ const EVENT_DOT_COLORS = {
   llm_call_end: "var(--event-llm-res)",
   tool_call_start: "var(--event-tool)",
   tool_call_end: "var(--event-result)",
-  turn_summary: "var(--event-end)"
+  turn_summary: "var(--accent)"
+};
+const EVENT_ICONS = {
+  interaction_start: "▶",
+  llm_request: "⬆",
+  llm_response: "⬇",
+  tool_start: "⚡",
+  tool_result: "✦",
+  tool_error: "✕",
+  llm_error: "✕",
+  interaction_end: "■",
+  llm_call_start: "⬆",
+  llm_call_end: "⬇",
+  tool_call_start: "⚡",
+  tool_call_end: "✦",
+  turn_summary: "◆"
 };
 function formatRelativeMs(ms) {
   if (ms < 1e3) return `+${ms}ms`;
@@ -13378,6 +13393,7 @@ function EventCard({ event, relativeMs }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-card", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "event-card-dot", style: { background: dotColor } }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "event-card-header", onClick: () => setExpanded((e) => !e), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-type-icon", style: { color: dotColor }, children: EVENT_ICONS[event.event] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `event-type-badge ${event.event}`, children: label }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "event-card-timestamp", children: formatRelativeMs(relativeMs) }),
       event.roundTrip !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "event-card-rt", children: [
@@ -13581,7 +13597,7 @@ function EventTimeline({ events }) {
 function formatDuration(ms) {
   if (ms === null) return "-";
   if (ms < 1e3) return `${ms}ms`;
-  return `${(ms / 1e3).toFixed(1)}s`;
+  return `${(ms / 1e3).toFixed(2)}s`;
 }
 function formatTokens(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
@@ -13591,45 +13607,56 @@ function formatTokens(n) {
 function DetailPanel({ selectedId }) {
   const { detail, isLoading, error } = useDetail(selectedId);
   if (!selectedId) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-placeholder", children: "Select an interaction to view details" }) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-placeholder", children: "Select an interaction to inspect" }) });
   }
   if (isLoading) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-placeholder", children: "Loading..." }) });
   }
   if (error) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-placeholder", style: { color: "var(--error)" }, children: [
-      "Error: ",
-      error
-    ] }) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-placeholder", style: { color: "var(--error)" }, children: error }) });
   }
   if (!detail) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-placeholder", children: "No data available" }) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-placeholder", children: "No data" }) });
   }
   const { summary, events } = detail;
+  const statusClass = summary.status === "complete" ? "complete" : summary.status === "error" ? "error" : "in-progress";
+  const statusLabel = summary.status === "complete" ? "COMPLETED" : summary.status === "error" ? "ERROR" : "IN PROGRESS";
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-panel", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-header", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-header-title", children: [
-        "#",
-        summary.index,
-        " ",
-        summary.userMessage || "(empty message)"
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-header-title", children: summary.userMessage || `interaction-${summary.index}` }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "right", flexShrink: 0 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-execution-label", children: "Execution Time" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-execution-time", children: formatDuration(summary.durationMs) })
+        ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-header-meta", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          "ID: ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { style: { fontSize: 10 }, children: summary.id })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-header-badges", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-badge ${statusClass}`, children: statusLabel }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-dim)" }, children: [
+          summary.eventCount,
+          " events"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-header-stats", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-stat-card", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-label", children: "Round Trips" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-value", children: summary.roundTripCount })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          "Duration: ",
-          formatDuration(summary.durationMs)
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-stat-card", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-label", children: "Prompt Tokens" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-value", children: formatTokens(summary.totalPromptTokens) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          "Tokens: ",
-          formatTokens(summary.totalTokens)
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-stat-card", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-label", children: "Output Tokens" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-value", children: formatTokens(summary.totalCompletionTokens) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          "Events: ",
-          summary.eventCount
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-stat-card", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-label", children: "Total Tokens" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-value", children: formatTokens(summary.totalTokens) })
+        ] }),
+        summary.toolCalls.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-stat-card", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-label", children: "Tool Calls" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "detail-stat-value", children: summary.toolCalls.length })
         ] })
       ] })
     ] }),
@@ -13639,9 +13666,10 @@ function DetailPanel({ selectedId }) {
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 600;
 const DEFAULT_PANEL_WIDTH = 320;
+const THEMES = ["dark", "midnight", "light"];
 function getInitialTheme() {
   const saved = localStorage.getItem("proxy-inspector-theme");
-  if (saved === "light" || saved === "dark") return saved;
+  if (saved === "light" || saved === "dark" || saved === "midnight") return saved;
   return "dark";
 }
 function getInitialPanelWidth() {
@@ -13668,7 +13696,10 @@ function App() {
     localStorage.setItem("proxy-inspector-panel-width", String(panelWidth));
   }, [panelWidth]);
   const toggleTheme = reactExports.useCallback(() => {
-    setTheme((t) => t === "dark" ? "light" : "dark");
+    setTheme((t) => {
+      const idx = THEMES.indexOf(t);
+      return THEMES[(idx + 1) % THEMES.length];
+    });
   }, []);
   const filtered = reactExports.useMemo(() => {
     if (!searchQuery.trim()) return interactions;

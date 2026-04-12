@@ -5,15 +5,17 @@ import { InteractionList } from './components/InteractionList'
 import { DetailPanel } from './components/DetailPanel'
 import type { InteractionSummary } from '@shared/types'
 
-type Theme = 'dark' | 'light'
+type Theme = 'dark' | 'light' | 'midnight'
 
 const MIN_PANEL_WIDTH = 180
 const MAX_PANEL_WIDTH = 600
 const DEFAULT_PANEL_WIDTH = 320
 
+const THEMES: Theme[] = ['dark', 'midnight', 'light']
+
 function getInitialTheme(): Theme {
   const saved = localStorage.getItem('proxy-inspector-theme')
-  if (saved === 'light' || saved === 'dark') return saved
+  if (saved === 'light' || saved === 'dark' || saved === 'midnight') return saved
   return 'dark'
 }
 
@@ -47,7 +49,10 @@ function App() {
   }, [panelWidth])
 
   const toggleTheme = useCallback(() => {
-    setTheme(t => t === 'dark' ? 'light' : 'dark')
+    setTheme(t => {
+      const idx = THEMES.indexOf(t)
+      return THEMES[(idx + 1) % THEMES.length]
+    })
   }, [])
 
   // Client-side filtering by user message
